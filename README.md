@@ -71,26 +71,25 @@ Authorization: Bearer <seu_token>
 
 ## 🗂 Estrutura do Projeto
 
-
+```
 controle_financeiro/
 │
 ├── app/
-│ ├── routes/
-│ │ ├── auth_routes.py
-│ │ ├── transaction_routes.py
-│ │ └── user_routes.py
-│ │
-│ ├── models.py
-│ ├── schemas.py
-│ ├── database.py
-│ └── init.py
+│   ├── routes/
+│   │   ├── auth_routes.py
+│   │   ├── transaction_routes.py
+│   │   └── user_routes.py
+│   │
+│   ├── models.py
+│   ├── schemas.py
+│   ├── database.py
+│   └── __init__.py
 │
 ├── instance/
 ├── run.py
 ├── requirements.txt
 └── README.md
-
-
+```
 ---
 
 ## ▶️ Como Rodar o Projeto
