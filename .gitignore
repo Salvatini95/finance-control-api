@@ -1,15 +1,55 @@
+# ========================
+# PYTHON / FLASK (backend)
+# ========================
+
 # Ambiente virtual
 .venv/
+venv/
+env/
 
 # Banco SQLite
 instance/
 
 # Variáveis de ambiente
 .env
+.env.*
 
 # Cache Python
 __pycache__/
 *.pyc
+*.pyo
+*.py[cod]
 
 # Configurações da IDE
 .idea/
+
+# ========================
+# NODE / REACT (frontend)
+# ========================
+
+# Dependências
+node_modules/
+
+# Build de produção
+dist/
+build/
+
+# Cache do Vite
+.vite/
+
+# Variáveis de ambiente do frontend
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ========================
+# SISTEMA OPERACIONAL
+# ========================
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Mac
+.DS_Store

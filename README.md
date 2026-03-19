@@ -1,153 +1,166 @@
-# 💰 Finance Control API
+# 💰 Controle Financeiro
 
-API REST desenvolvida com Flask para controle financeiro pessoal de usuários, com autenticação JWT e gerenciamento de transações.
+Sistema fullstack de controle financeiro pessoal desenvolvido com Flask e React.
 
----
-
-## 📌 Objetivo do Projeto
-
-Este projeto foi desenvolvido com o objetivo de praticar conceitos fundamentais de desenvolvimento backend, incluindo:
-
-- Arquitetura modular
-- Autenticação com JWT
-- Organização por camadas
-- Boas práticas com Flask
-- ORM com SQLAlchemy
-- Serialização com Marshmallow
-
-A API permite que usuários autenticados gerenciem suas próprias transações financeiras (receitas e despesas).
+![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python)
+![Flask](https://img.shields.io/badge/Flask-3.x-black?logo=flask)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
+![JWT](https://img.shields.io/badge/Auth-JWT-orange)
+![SQLite](https://img.shields.io/badge/Database-SQLite-lightgrey?logo=sqlite)
 
 ---
 
-## 🚀 Tecnologias Utilizadas
+## 📸 Telas
 
-- Python 3.13
-- Flask
-- Flask-JWT-Extended
-- Flask-SQLAlchemy
-- Marshmallow
-- SQLite
+> Dashboard, Analytics e tela de Transações
+
+<!-- Adicione prints aqui depois -->
 
 ---
 
-## 🔐 Autenticação
+## ✨ Funcionalidades
 
-A API utiliza autenticação baseada em **JWT (JSON Web Token)**.
-
-### 🔄 Fluxo de autenticação:
-
-1. Usuário se registra
-2. Realiza login
-3. Recebe um token JWT
-4. Envia o token no header:
-
-
-Authorization: Bearer <seu_token>
-
-
-5. Acessa rotas protegidas
+- 🔐 Autenticação JWT (login e cadastro de usuários)
+- 📊 Dashboard com gráficos de saldo acumulado, categorias e entradas vs saídas
+- 📋 CRUD completo de transações (criar, listar, editar, deletar)
+- 👥 Multi usuários com senhas criptografadas (hash bcrypt)
+- 📱 Interface responsiva com Tailwind CSS
 
 ---
 
-## 📡 Principais Endpoints
+## 🛠️ Stack
 
-### 🔑 Autenticação
+### Backend
+| Tecnologia | Uso |
+|---|---|
+| Python + Flask | API REST |
+| SQLAlchemy | ORM / banco de dados |
+| Flask-JWT-Extended | Autenticação com token |
+| Werkzeug | Hash seguro de senhas |
+| SQLite | Banco de dados (desenvolvimento) |
 
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| POST | /auth/register | Registrar novo usuário |
-| POST | /auth/login | Login e geração de token |
+### Frontend
+| Tecnologia | Uso |
+|---|---|
+| React 18 | Interface |
+| React Router DOM | Navegação entre páginas |
+| Recharts | Gráficos interativos |
+| Tailwind CSS | Estilização |
 
 ---
 
-### 💳 Transações
-
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| POST | /transactions | Criar nova transação |
-| GET | /transactions | Listar transações do usuário autenticado |
-
----
-
-## 🗂 Estrutura do Projeto
-
+## 📁 Estrutura do Projeto
 ```
-controle_financeiro/
-│
-├── app/
+controle-financeiro/
+├── backend/
+│   ├── app/
+│   │   ├── models.py        # User e Transaction
+│   │   ├── extensions.py    # SQLAlchemy, JWT
+│   │   └── __init__.py      # Inicialização do Flask
 │   ├── routes/
-│   │   ├── auth_routes.py
+│   │   ├── auth_routes.py   # Login e registro
 │   │   ├── transaction_routes.py
+│   │   ├── category_routes.py
 │   │   └── user_routes.py
-│   │
-│   ├── models.py
-│   ├── schemas.py
-│   ├── database.py
-│   └── __init__.py
+│   └── run.py
 │
-├── instance/
-├── run.py
-├── requirements.txt
-└── README.md
+└── frontend/
+    └── src/
+        ├── components/
+        │   ├── charts/      # BalanceChart, CategoryChart, MonthlyChart
+        │   ├── layout/      # Sidebar
+        │   └── transactions/
+        ├── pages/
+        │   ├── Dashboard.jsx
+        │   ├── Analytics.jsx
+        │   └── Login.jsx
+        └── services/
+            └── api.js
 ```
+
 ---
 
-## ▶️ Como Rodar o Projeto
+## 🚀 Como rodar localmente
 
-### 1️⃣ Clonar repositório
+### Pré-requisitos
+- Python 3.10+
+- Node.js 18+
 
+### Backend
 ```bash
-git clone https://github.com/Salvatini95/finance-control-api.git
-cd controle_financeiro
-2️⃣ Criar ambiente virtual
+# Entre na pasta do backend
+cd backend
+
+# Crie o ambiente virtual
 python -m venv .venv
-3️⃣ Ativar ambiente virtual
 
-Windows:
-
+# Ative o ambiente virtual
+# Windows:
 .venv\Scripts\activate
-
-Mac/Linux:
-
+# Linux/Mac:
 source .venv/bin/activate
-4️⃣ Instalar dependências
+
+# Instale as dependências
 pip install -r requirements.txt
-5️⃣ Rodar servidor
+
+# Rode o servidor
 python run.py
+```
 
-Servidor disponível em:
+> API disponível em: `http://127.0.0.1:5000`
 
-http://127.0.0.1:5000
-🧠 Conceitos Aplicados
+### Frontend
+```bash
+# Entre na pasta do frontend
+cd frontend
 
-Arquitetura modular
+# Instale as dependências
+npm install
 
-Separação de responsabilidades
+# Rode o projeto
+npm run dev
+```
 
-Proteção de rotas
+> Frontend disponível em: `http://localhost:5173`
 
-Autenticação stateless
+---
 
-Modelagem de banco com SQLAlchemy
+## 🔌 Endpoints da API
 
-Serialização e validação com Marshmallow
+| Método | Rota | Descrição | Auth |
+|---|---|---|---|
+| POST | `/api/register` | Cadastro de usuário | ❌ |
+| POST | `/api/login` | Login | ❌ |
+| GET | `/api/transactions` | Listar transações | ✅ |
+| POST | `/api/transactions` | Criar transação | ✅ |
+| PUT | `/api/transactions/<id>` | Atualizar transação | ✅ |
+| DELETE | `/api/transactions/<id>` | Deletar transação | ✅ |
 
-Organização por Blueprints
+---
 
-🔮 Próximas Melhorias
+## 🔒 Segurança
 
-Atualizar e deletar transações
+- Senhas armazenadas com hash (Werkzeug/bcrypt)
+- Rotas protegidas com JWT
+- Token salvo no localStorage com expiração
+- Validação de dados no backend
 
-Deploy em produção (Render ou Railway)
+---
 
-Frontend em React consumindo a API
+## 🗺️ Próximos passos
 
-Documentação Swagger
+- [ ] Página de transações estilo planilha
+- [ ] Filtros por data e categoria
+- [ ] Cadastro de clientes
+- [ ] Relatórios em PDF
+- [ ] Deploy em produção (Railway + Vercel)
+- [ ] Controle de estoque
 
-Testes automatizados
+---
 
-👨‍💻 Autor
+## 👨‍💻 Autor
 
-Desenvolvido por Guilherme Salvatini
+Desenvolvido por **Guilherme Salvatini**
 
-🔗 GitHub: https://github.com/Salvatini95
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-blue?logo=linkedin)](https://www.linkedin.com/in/guilherme-salvatini-623326361/)
+[![GitHub](https://img.shields.io/badge/GitHub-black?logo=github)](https://github.com/Salvatini95)
