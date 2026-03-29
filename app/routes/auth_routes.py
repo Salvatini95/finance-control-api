@@ -22,9 +22,11 @@ def register():
     password = data.get("password", "").strip()
     name     = data.get("name", "").strip()
 
-    # --- Validações ---
     if not email or not password:
         return jsonify({"msg": "Email e senha são obrigatórios"}), 400
+
+    if not name:
+        return jsonify({"msg": "Nome é obrigatório"}), 400
 
     if len(password) < 6:
         return jsonify({"msg": "A senha deve ter no mínimo 6 caracteres"}), 400
@@ -32,9 +34,8 @@ def register():
     if User.query.filter_by(email=email).first():
         return jsonify({"msg": "Este email já está cadastrado"}), 409
 
-    # --- Criação do usuário ---
-    new_user = User(email=email)
-    new_user.set_password(password)   # hash seguro via werkzeug
+    new_user = User(email=email, name=name)
+    new_user.set_password(password)
 
     db.session.add(new_user)
     db.session.commit()
@@ -62,10 +63,13 @@ def login():
 
     user = User.query.filter_by(email=email).first()
 
-    # Mensagem genérica para não revelar se o email existe
     if not user or not user.check_password(password):
         return jsonify({"msg": "Email ou senha inválidos"}), 401
 
     token = create_access_token(identity=str(user.id))
 
-    return jsonify({"token": token, "email": user.email}), 200
+    return jsonify({
+        "token": token,
+        "email": user.email,
+        "name": user.name or ""
+    }), 200
