@@ -1,3 +1,6 @@
+import os
+from datetime import timedelta
+from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS
 from app.extensions import db, jwt, migrate
@@ -6,34 +9,49 @@ from app.routes.transaction_routes import transaction_bp
 from app.routes.bill_routes import bill_bp
 from app.routes.product_routes import product_bp
 from app.routes.quote_routes import quote_bp
+from app.routes.client_routes import client_bp
+from app.routes.order_routes import order_bp
+from app.routes.stock_routes import stock_bp
+from app.routes.company_routes import company_bp
+
+load_dotenv()
 
 
 def create_app():
     app = Flask(__name__)
 
-    # 🔐 SEGURANÇA
-    app.config["SECRET_KEY"]                     = "finance_secret_key_super_segura_123456"
-    app.config["JWT_SECRET_KEY"]                 = "jwt_super_secret_finance_1234567890_secure"
-    app.config["SQLALCHEMY_DATABASE_URI"]        = "sqlite:///database.db"
+    app.config["SECRET_KEY"]                     = os.environ.get("SECRET_KEY")
+    app.config["JWT_SECRET_KEY"]                 = os.environ.get("JWT_SECRET_KEY")
+    app.config["SQLALCHEMY_DATABASE_URI"]        = os.environ.get("DATABASE_URL")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["MAX_CONTENT_LENGTH"]             = 4 * 1024 * 1024
+    app.config["JWT_ACCESS_TOKEN_EXPIRES"]       = timedelta(hours=8)
 
-    # Aumenta limite para aceitar logo em base64 (~4 MB)
-    app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024
-
-    # 🔥 CORS LIBERADO
-    CORS(app, supports_credentials=True)
+    CORS(app,
+         origins=[
+             "http://localhost:5173",
+             "http://localhost:5174",
+             "http://127.0.0.1:5173",
+             "https://svfinance.com.br",
+             "https://www.svfinance.com.br",
+         ],
+         supports_credentials=True,
+         allow_headers=["Content-Type", "Authorization"],
+         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    )
 
     db.init_app(app)
     jwt.init_app(app)
-    migrate.init_app(app, db)  # ← Flask-Migrate inicializado
+    migrate.init_app(app, db)
 
-    # 🔗 ROTAS
     app.register_blueprint(auth_bp,        url_prefix="/api")
     app.register_blueprint(transaction_bp, url_prefix="/api")
     app.register_blueprint(bill_bp,        url_prefix="/api")
     app.register_blueprint(product_bp,     url_prefix="/api")
     app.register_blueprint(quote_bp,       url_prefix="/api")
-
-    # ⚠️ db.create_all() removido — agora gerenciado pelo Flask-Migrate
+    app.register_blueprint(client_bp,      url_prefix="/api")
+    app.register_blueprint(order_bp,       url_prefix="/api")
+    app.register_blueprint(stock_bp,       url_prefix="/api")
+    app.register_blueprint(company_bp,     url_prefix="/api")
 
     return app
