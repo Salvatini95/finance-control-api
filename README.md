@@ -1,160 +1,130 @@
-# 💰 Controle Financeiro
+# 💰 SV Finance Control — API
 
-Sistema fullstack de controle financeiro pessoal desenvolvido com Flask e React.
+Backend do sistema de gestão financeira empresarial desenvolvido com Flask e PostgreSQL.
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python)
 ![Flask](https://img.shields.io/badge/Flask-3.x-black?logo=flask)
-![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
+![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-336791?logo=postgresql)
 ![JWT](https://img.shields.io/badge/Auth-JWT-orange)
-![SQLite](https://img.shields.io/badge/Database-SQLite-lightgrey?logo=sqlite)
+![Supabase](https://img.shields.io/badge/Hosted-Supabase-3ECF8E?logo=supabase)
 
----
-
-## 📸 Telas
-
-> Dashboard, Analytics e tela de Transações
-
-<!-- Adicione prints aqui depois -->
+> 🔗 Frontend: [finance-control-web](https://github.com/Salvatini95/finance-control-web)
 
 ---
 
 ## ✨ Funcionalidades
 
-- 🔐 Autenticação JWT (login e cadastro de usuários)
-- 📊 Dashboard com gráficos de saldo acumulado, categorias e entradas vs saídas
-- 📋 CRUD completo de transações (criar, listar, editar, deletar)
-- 👥 Multi usuários com senhas criptografadas (hash bcrypt)
-- 📱 Interface responsiva com Tailwind CSS
+- 🔐 Autenticação JWT com expiração de 8h
+- 🏢 Multi-tenant — registro cria Company e User admin simultaneamente
+- 👥 Gestão de usuários por empresa com roles
+- 📊 Transações com origem (manual, venda, conta)
+- 📄 Contas a pagar e receber
+- 🧾 Orçamentos com fluxo completo de status
+- 🛒 Vendas com conclusão automática: lança transação, baixa estoque e registra serviços
+- 📦 Produtos e serviços com controle de estoque e estoque inicial automático
+- 👤 Clientes com histórico
+- 📈 Analytics financeiro
 
 ---
 
 ## 🛠️ Stack
 
-### Backend
 | Tecnologia | Uso |
 |---|---|
 | Python + Flask | API REST |
-| SQLAlchemy | ORM / banco de dados |
+| SQLAlchemy | ORM |
+| Flask-Migrate | Migrações de banco |
 | Flask-JWT-Extended | Autenticação com token |
+| Flask-CORS | Liberação de origens |
 | Werkzeug | Hash seguro de senhas |
-| SQLite | Banco de dados (desenvolvimento) |
-
-### Frontend
-| Tecnologia | Uso |
-|---|---|
-| React 18 | Interface |
-| React Router DOM | Navegação entre páginas |
-| Recharts | Gráficos interativos |
-| Tailwind CSS | Estilização |
+| PostgreSQL via Supabase | Banco de dados |
 
 ---
 
-## 📁 Estrutura do Projeto
+## 📁 Estrutura
 ```
-controle-financeiro/
-├── backend/
-│   ├── app/
-│   │   ├── models.py        # User e Transaction
-│   │   ├── extensions.py    # SQLAlchemy, JWT
-│   │   └── __init__.py      # Inicialização do Flask
-│   ├── routes/
-│   │   ├── auth_routes.py   # Login e registro
-│   │   ├── transaction_routes.py
-│   │   ├── category_routes.py
-│   │   └── user_routes.py
-│   └── run.py
-│
-└── frontend/
-    └── src/
-        ├── components/
-        │   ├── charts/      # BalanceChart, CategoryChart, MonthlyChart
-        │   ├── layout/      # Sidebar
-        │   └── transactions/
-        ├── pages/
-        │   ├── Dashboard.jsx
-        │   ├── Analytics.jsx
-        │   └── Login.jsx
-        └── services/
-            └── api.js
+controle_financeiro/
+├── .env
+├── run.py
+└── app/
+├── init.py
+├── extensions.py
+├── models.py
+└── routes/
+├── auth_routes.py
+├── company_routes.py
+├── transaction_routes.py
+├── bill_routes.py
+├── product_routes.py
+├── client_routes.py
+├── order_routes.py
+├── quote_routes.py
+└── stock_routes.py
 ```
-
 ---
 
 ## 🚀 Como rodar localmente
 
 ### Pré-requisitos
 - Python 3.10+
-- Node.js 18+
+- PostgreSQL ou conta no Supabase
 
-### Backend
-```bash
-# Entre na pasta do backend
-cd backend
-
-# Crie o ambiente virtual
+### Instalação
+git clone https://github.com/Salvatini95/controle_financeiro.git
+cd controle_financeiro
 python -m venv .venv
-
-# Ative o ambiente virtual
-# Windows:
+Windows
 .venv\Scripts\activate
-# Linux/Mac:
-source .venv/bin/activate
-
-# Instale as dependências
 pip install -r requirements.txt
 
-# Rode o servidor
+### Configuração
+
+Crie um arquivo .env na raiz:
+DATABASE_URL=postgresql://usuario:senha@host:5432/postgres
+JWT_SECRET_KEY=sua_chave_jwt_secreta
+SECRET_KEY=sua_chave_secreta
+
+### Execução
+flask db upgrade
 python run.py
-```
 
-> API disponível em: `http://127.0.0.1:5000`
-
-### Frontend
-```bash
-# Entre na pasta do frontend
-cd frontend
-
-# Instale as dependências
-npm install
-
-# Rode o projeto
-npm run dev
-```
-
-> Frontend disponível em: `http://localhost:5173`
+API disponível em: http://127.0.0.1:5000
 
 ---
 
-## 🔌 Endpoints da API
+## 🔌 Principais Endpoints
 
 | Método | Rota | Descrição | Auth |
 |---|---|---|---|
-| POST | `/api/register` | Cadastro de usuário | ❌ |
-| POST | `/api/login` | Login | ❌ |
-| GET | `/api/transactions` | Listar transações | ✅ |
-| POST | `/api/transactions` | Criar transação | ✅ |
-| PUT | `/api/transactions/<id>` | Atualizar transação | ✅ |
-| DELETE | `/api/transactions/<id>` | Deletar transação | ✅ |
+| POST | /api/register | Cria empresa e admin | ❌ |
+| POST | /api/login | Login | ❌ |
+| GET | /api/transactions | Listar transações | ✅ |
+| POST | /api/transactions | Criar transação | ✅ |
+| GET | /api/quotes | Listar orçamentos | ✅ |
+| POST | /api/orders/from-quote/id | Criar venda de orçamento | ✅ |
+| POST | /api/orders/id/complete | Concluir venda | ✅ |
+| GET | /api/products | Listar produtos | ✅ |
+| GET | /api/company/users | Listar usuários da empresa | ✅ Admin |
+| POST | /api/company/users | Criar usuário na empresa | ✅ Admin |
 
 ---
 
 ## 🔒 Segurança
 
-- Senhas armazenadas com hash (Werkzeug/bcrypt)
+- Senhas com hash via Werkzeug
 - Rotas protegidas com JWT
-- Token salvo no localStorage com expiração
-- Validação de dados no backend
+- Token com expiração de 8h
+- Isolamento total de dados por company_id
+- CORS configurado por origem
 
 ---
 
 ## 🗺️ Próximos passos
 
-- [ ] Página de transações estilo planilha
-- [ ] Filtros por data e categoria
-- [ ] Cadastro de clientes
-- [ ] Relatórios em PDF
-- [ ] Deploy em produção (Railway + Vercel)
-- [ ] Controle de estoque
+- [ ] Dashboard por role com dados filtrados por usuário
+- [ ] Analytics por vendedor
+- [ ] Sistema de planos (Free, Pro, Business)
+- [ ] Deploy em produção (Railway)
 
 ---
 
