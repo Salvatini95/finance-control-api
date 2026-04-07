@@ -33,6 +33,7 @@ def create_app():
              "http://localhost:5174",
              "http://127.0.0.1:5173",
              "https://finance-control-web-five.vercel.app",
+             "https://*.vercel.app",
              "https://svfinance.com.br",
              "https://www.svfinance.com.br",
          ],
