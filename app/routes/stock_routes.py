@@ -11,18 +11,35 @@ def _get_user(user_id):
     return User.query.get(int(user_id))
 
 
+def _find_product(product_id, user):
+    if user.company_id:
+        return Product.query.filter_by(id=product_id, company_id=user.company_id).first()
+    return Product.query.filter_by(id=product_id, user_id=user.id).first()
+
+
+def _find_service_record(record_id, user):
+    if user.company_id:
+        return ServiceRecord.query.filter_by(id=record_id, company_id=user.company_id).first()
+    return ServiceRecord.query.filter_by(id=record_id, user_id=user.id).first()
+
+
 @stock_bp.route("/stock/<int:product_id>/movements", methods=["GET"])
 @jwt_required()
 def get_movements(product_id):
     user    = _get_user(get_jwt_identity())
-    product = Product.query.filter_by(id=product_id, user_id=user.id).first()
+    product = _find_product(product_id, user)
     if not product:
         return jsonify({"msg": "Produto não encontrado"}), 404
 
     movements = StockMovement.query.filter_by(product_id=product_id).order_by(StockMovement.id.desc()).all()
     return jsonify([{
-        "id": m.id, "type": m.type, "qty": m.qty,
-        "cost": m.cost, "reason": m.reason, "date": m.date, "order_id": m.order_id,
+        "id":       m.id,
+        "type":     m.type,
+        "qty":      m.qty,
+        "cost":     m.cost,
+        "reason":   m.reason,
+        "date":     m.date,
+        "order_id": m.order_id,
     } for m in movements]), 200
 
 
@@ -30,7 +47,7 @@ def get_movements(product_id):
 @jwt_required()
 def add_movement(product_id):
     user    = _get_user(get_jwt_identity())
-    product = Product.query.filter_by(id=product_id, user_id=user.id).first()
+    product = _find_product(product_id, user)
     if not product:
         return jsonify({"msg": "Produto não encontrado"}), 404
     if product.type != "product":
@@ -48,7 +65,7 @@ def add_movement(product_id):
 
     if mov_type == "in":
         if cost is not None:
-            cost = float(cost)
+            cost        = float(cost)
             total_value = product.stock_qty * product.stock_avg_cost + qty * cost
             new_qty     = product.stock_qty + qty
             product.stock_avg_cost = total_value / new_qty if new_qty > 0 else cost
@@ -74,37 +91,50 @@ def add_movement(product_id):
     db.session.add(movement)
     db.session.commit()
 
-    return jsonify({"msg": "Movimentação registrada", "stock_qty": product.stock_qty, "stock_avg_cost": product.stock_avg_cost}), 201
+    return jsonify({
+        "msg":            "Movimentação registrada",
+        "stock_qty":      product.stock_qty,
+        "stock_avg_cost": product.stock_avg_cost,
+    }), 201
 
 
 @stock_bp.route("/stock/alerts", methods=["GET"])
 @jwt_required()
 def stock_alerts():
     user = _get_user(get_jwt_identity())
-
     if user.company_id:
         products = Product.query.filter_by(company_id=user.company_id, type="product", active=True).all()
     else:
         products = Product.query.filter_by(user_id=user.id, type="product", active=True).all()
 
     alerts = [p for p in products if p.stock_qty <= p.stock_min]
-    return jsonify([{"id": p.id, "name": p.name, "stock_qty": p.stock_qty, "stock_min": p.stock_min, "unit": p.unit} for p in alerts]), 200
+    return jsonify([{
+        "id":        p.id,
+        "name":      p.name,
+        "stock_qty": p.stock_qty,
+        "stock_min": p.stock_min,
+        "unit":      p.unit,
+    } for p in alerts]), 200
 
 
 @stock_bp.route("/services/<int:product_id>/records", methods=["GET"])
 @jwt_required()
 def get_service_records(product_id):
     user    = _get_user(get_jwt_identity())
-    product = Product.query.filter_by(id=product_id, user_id=user.id).first()
+    product = _find_product(product_id, user)
     if not product:
         return jsonify({"msg": "Serviço não encontrado"}), 404
 
     records = ServiceRecord.query.filter_by(product_id=product_id).order_by(ServiceRecord.id.desc()).all()
     return jsonify([{
-        "id": r.id, "date": r.date, "duration_min": r.duration_min,
-        "amount": r.amount, "notes": r.notes,
-        "client_id": r.client_id, "client_name": r.client.name if r.client else None,
-        "order_id": r.order_id,
+        "id":           r.id,
+        "date":         r.date,
+        "duration_min": r.duration_min,
+        "amount":       r.amount,
+        "notes":        r.notes,
+        "client_id":    r.client_id,
+        "client_name":  r.client.name if r.client else None,
+        "order_id":     r.order_id,
     } for r in records]), 200
 
 
@@ -112,7 +142,7 @@ def get_service_records(product_id):
 @jwt_required()
 def add_service_record(product_id):
     user    = _get_user(get_jwt_identity())
-    product = Product.query.filter_by(id=product_id, user_id=user.id).first()
+    product = _find_product(product_id, user)
     if not product:
         return jsonify({"msg": "Serviço não encontrado"}), 404
     if product.type != "service":
@@ -133,14 +163,17 @@ def add_service_record(product_id):
     product.services_count += 1
     db.session.add(record)
     db.session.commit()
-    return jsonify({"msg": "Registro de serviço salvo", "services_count": product.services_count}), 201
+    return jsonify({
+        "msg":            "Registro de serviço salvo",
+        "services_count": product.services_count,
+    }), 201
 
 
 @stock_bp.route("/services/records/<int:record_id>", methods=["DELETE"])
 @jwt_required()
 def delete_service_record(record_id):
     user   = _get_user(get_jwt_identity())
-    record = ServiceRecord.query.filter_by(id=record_id, user_id=user.id).first()
+    record = _find_service_record(record_id, user)
     if not record:
         return jsonify({"msg": "Registro não encontrado"}), 404
 

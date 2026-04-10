@@ -11,16 +11,20 @@ def _get_user(user_id):
     return User.query.get(int(user_id))
 
 
+def _find_client(client_id, user):
+    if user.company_id:
+        return Client.query.filter_by(id=client_id, company_id=user.company_id).first()
+    return Client.query.filter_by(id=client_id, user_id=user.id).first()
+
+
 @client_bp.route("/clients", methods=["GET"])
 @jwt_required()
 def get_clients():
     user = _get_user(get_jwt_identity())
-
     if user.company_id:
         clients = Client.query.filter_by(company_id=user.company_id).order_by(Client.name).all()
     else:
         clients = Client.query.filter_by(user_id=user.id).order_by(Client.name).all()
-
     return jsonify([{
         "id":         c.id,
         "name":       c.name,
@@ -37,8 +41,7 @@ def get_clients():
 @jwt_required()
 def get_client(client_id):
     user = _get_user(get_jwt_identity())
-    c    = Client.query.filter_by(id=client_id, user_id=user.id).first()
-
+    c    = _find_client(client_id, user)
     if not c:
         return jsonify({"msg": "Cliente não encontrado"}), 404
 
@@ -85,19 +88,18 @@ def create_client():
     )
     db.session.add(new_client)
     db.session.commit()
-    return jsonify({"msg": "Cliente criado com sucesso", "id": new_client.id}), 201
+    return jsonify({"msg": "Cliente criado com sucesso", "id": new_client.id, "name": new_client.name}), 201
 
 
 @client_bp.route("/clients/<int:client_id>", methods=["PUT"])
 @jwt_required()
 def update_client(client_id):
     user = _get_user(get_jwt_identity())
-    c    = Client.query.filter_by(id=client_id, user_id=user.id).first()
-
+    c    = _find_client(client_id, user)
     if not c:
         return jsonify({"msg": "Cliente não encontrado"}), 404
 
-    data   = request.get_json()
+    data       = request.get_json()
     c.name     = data.get("name",     c.name).strip()
     c.email    = data.get("email",    c.email)
     c.phone    = data.get("phone",    c.phone)
@@ -113,8 +115,7 @@ def update_client(client_id):
 @jwt_required()
 def delete_client(client_id):
     user = _get_user(get_jwt_identity())
-    c    = Client.query.filter_by(id=client_id, user_id=user.id).first()
-
+    c    = _find_client(client_id, user)
     if not c:
         return jsonify({"msg": "Cliente não encontrado"}), 404
 

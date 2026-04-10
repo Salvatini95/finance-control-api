@@ -11,16 +11,20 @@ def _get_user(user_id):
     return User.query.get(int(user_id))
 
 
+def _find_bill(bill_id, user):
+    if user.company_id:
+        return Bill.query.filter_by(id=bill_id, company_id=user.company_id).first()
+    return Bill.query.filter_by(id=bill_id, user_id=user.id).first()
+
+
 @bill_bp.route("/bills", methods=["GET"])
 @jwt_required()
 def get_bills():
     user = _get_user(get_jwt_identity())
-
     if user.company_id:
         bills = Bill.query.filter_by(company_id=user.company_id).order_by(Bill.due_date).all()
     else:
         bills = Bill.query.filter_by(user_id=user.id).order_by(Bill.due_date).all()
-
     return jsonify([{
         "id":             b.id,
         "description":    b.description,
@@ -80,8 +84,7 @@ def create_bill():
 @jwt_required()
 def update_bill(bill_id):
     user = _get_user(get_jwt_identity())
-    bill = Bill.query.filter_by(id=bill_id, user_id=user.id).first()
-
+    bill = _find_bill(bill_id, user)
     if not bill:
         return jsonify({"msg": "Conta não encontrada"}), 404
 
@@ -111,8 +114,7 @@ def update_bill(bill_id):
 @jwt_required()
 def pay_bill(bill_id):
     user = _get_user(get_jwt_identity())
-    bill = Bill.query.filter_by(id=bill_id, user_id=user.id).first()
-
+    bill = _find_bill(bill_id, user)
     if not bill:
         return jsonify({"msg": "Conta não encontrada"}), 404
 
@@ -128,8 +130,7 @@ def pay_bill(bill_id):
 @jwt_required()
 def delete_bill(bill_id):
     user = _get_user(get_jwt_identity())
-    bill = Bill.query.filter_by(id=bill_id, user_id=user.id).first()
-
+    bill = _find_bill(bill_id, user)
     if not bill:
         return jsonify({"msg": "Conta não encontrada"}), 404
 
@@ -138,10 +139,6 @@ def delete_bill(bill_id):
     db.session.commit()
     return jsonify({"msg": "Conta removida com sucesso"}), 200
 
-
-# =========================
-# HELPERS
-# =========================
 
 def _sync_transaction(bill, user):
     transaction_type = "expense" if bill.type == "payable" else "income"

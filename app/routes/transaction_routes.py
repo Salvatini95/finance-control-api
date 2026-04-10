@@ -10,14 +10,19 @@ def _get_user(user_id):
     return User.query.get(int(user_id))
 
 
+def _find_transaction(transaction_id, user):
+    if user.company_id:
+        return Transaction.query.filter_by(id=transaction_id, company_id=user.company_id).first()
+    return Transaction.query.filter_by(id=transaction_id, user_id=user.id).first()
+
+
 @transaction_bp.route("/transactions", methods=["GET"])
 @jwt_required()
 def get_transactions():
-    user    = _get_user(get_jwt_identity())
+    user          = _get_user(get_jwt_identity())
     source_filter = request.args.get("source", "all")
     type_filter   = request.args.get("type", "all")
 
-    # filtra por company_id se disponível, senão por user_id
     if user.company_id:
         query = Transaction.query.filter_by(company_id=user.company_id)
     else:
@@ -78,14 +83,14 @@ def create_transaction():
 @jwt_required()
 def update_transaction(transaction_id):
     user = _get_user(get_jwt_identity())
-    t    = Transaction.query.filter_by(id=transaction_id, user_id=user.id).first()
+    t    = _find_transaction(transaction_id, user)
 
     if not t:
         return jsonify({"msg": "Transação não encontrada"}), 404
     if t.source != "manual":
         return jsonify({"msg": "Transações automáticas não podem ser editadas"}), 400
 
-    data = request.get_json()
+    data          = request.get_json()
     t.description = data.get("description", t.description)
     t.amount      = float(data.get("amount", t.amount))
     t.type        = data.get("type",        t.type)
@@ -100,7 +105,7 @@ def update_transaction(transaction_id):
 @jwt_required()
 def delete_transaction(transaction_id):
     user = _get_user(get_jwt_identity())
-    t    = Transaction.query.filter_by(id=transaction_id, user_id=user.id).first()
+    t    = _find_transaction(transaction_id, user)
 
     if not t:
         return jsonify({"msg": "Transação não encontrada"}), 404
