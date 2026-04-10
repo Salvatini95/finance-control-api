@@ -14,21 +14,18 @@ def _get_user(user_id):
 
 
 def _find_order(order_id, user):
-    """Busca venda por company_id (multi-tenant) ou user_id (fallback)."""
     if user.company_id:
         return Order.query.filter_by(id=order_id, company_id=user.company_id).first()
     return Order.query.filter_by(id=order_id, user_id=user.id).first()
 
 
 def _find_quote(quote_id, user):
-    """Busca orçamento por company_id (multi-tenant) ou user_id (fallback)."""
     if user.company_id:
         return Quote.query.filter_by(id=quote_id, company_id=user.company_id).first()
     return Quote.query.filter_by(id=quote_id, user_id=user.id).first()
 
 
 def _find_client(client_id, user):
-    """Busca cliente por company_id (multi-tenant) ou user_id (fallback)."""
     if user.company_id:
         return Client.query.filter_by(id=client_id, company_id=user.company_id).first()
     return Client.query.filter_by(id=client_id, user_id=user.id).first()
@@ -68,12 +65,10 @@ def _serialize_order(o):
 @jwt_required()
 def get_orders():
     user = _get_user(get_jwt_identity())
-
     if user.company_id:
         orders = Order.query.filter_by(company_id=user.company_id).order_by(Order.id.desc()).all()
     else:
         orders = Order.query.filter_by(user_id=user.id).order_by(Order.id.desc()).all()
-
     return jsonify([_serialize_order(o) for o in orders]), 200
 
 
@@ -92,7 +87,6 @@ def get_order(order_id):
 def create_order():
     user = _get_user(get_jwt_identity())
     data = request.get_json()
-
     if not data:
         return jsonify({"msg": "Nenhum dado enviado"}), 400
 
@@ -141,7 +135,6 @@ def create_order_from_quote(quote_id):
     if quote.status != "approved":
         return jsonify({"msg": "Apenas orçamentos aprovados podem gerar vendas"}), 400
 
-    # verifica se já existe venda para este orçamento na empresa
     if user.company_id:
         existing = Order.query.filter_by(quote_id=quote_id, company_id=user.company_id).first()
     else:
@@ -228,6 +221,10 @@ def change_order_status(order_id):
     if not o:
         return jsonify({"msg": "Venda não encontrada"}), 404
 
+    # ✅ vendedor só pode alterar status das próprias vendas
+    if user.role == "seller" and o.user_id != user.id:
+        return jsonify({"msg": "Você não tem permissão para alterar esta venda"}), 403
+
     data   = request.get_json()
     status = data.get("status")
     valid  = ["open", "in_progress", "done", "cancelled"]
@@ -238,7 +235,7 @@ def change_order_status(order_id):
     o.status   = status
 
     if status == "done" and old_status != "done":
-        _conclude_order(o, user)
+        _conclude_order(o)
     elif old_status == "done" and status != "done":
         if o.transaction_id:
             t = Transaction.query.get(o.transaction_id)
@@ -259,13 +256,18 @@ def complete_order(order_id):
 
     if not o:
         return jsonify({"msg": "Venda não encontrada"}), 404
+
+    # ✅ vendedor só pode concluir as próprias vendas
+    if user.role == "seller" and o.user_id != user.id:
+        return jsonify({"msg": "Você não tem permissão para concluir esta venda"}), 403
+
     if o.status == "done":
         return jsonify({"msg": "Esta venda já foi concluída"}), 400
     if o.status == "cancelled":
         return jsonify({"msg": "Vendas canceladas não podem ser concluídas"}), 400
 
     o.status = "done"
-    _conclude_order(o, user)
+    _conclude_order(o)
     db.session.commit()
 
     return jsonify({"msg": f"Venda {o.number} concluída!", "transaction_id": o.transaction_id, "total": o.total}), 200
@@ -279,6 +281,10 @@ def delete_order(order_id):
 
     if not o:
         return jsonify({"msg": "Venda não encontrada"}), 404
+
+    # ✅ vendedor só pode deletar as próprias vendas
+    if user.role == "seller" and o.user_id != user.id:
+        return jsonify({"msg": "Você não tem permissão para remover esta venda"}), 403
 
     if o.transaction_id:
         t = Transaction.query.get(o.transaction_id)
@@ -294,10 +300,17 @@ def delete_order(order_id):
 # HELPER — CONCLUIR VENDA
 # =========================
 
-def _conclude_order(o, user):
-    """Cria transação, baixa estoque e registra serviços ao concluir venda."""
+def _conclude_order(o):
+    """Cria transação, baixa estoque e registra serviços.
+    ✅ Usa sempre o user_id da ORDEM, não de quem está concluindo.
+    """
     o.finished_at = str(date.today())
     items = json.loads(o.items_json or "[]")
+
+    # ✅ usa o dono da venda, não o usuário logado
+    order_user = User.query.get(o.user_id)
+    if not order_user:
+        return
 
     client_name = o.client.name if o.client else "Cliente"
     transaction = Transaction(
@@ -307,8 +320,8 @@ def _conclude_order(o, user):
         category    = "Vendas",
         date        = str(date.today()),
         source      = "sale",
-        user_id     = user.id,
-        company_id  = user.company_id,
+        user_id     = order_user.id,
+        company_id  = order_user.company_id,
     )
     db.session.add(transaction)
     db.session.flush()
@@ -334,8 +347,8 @@ def _conclude_order(o, user):
                 date       = str(date.today()),
                 product_id = product_id,
                 order_id   = o.id,
-                user_id    = user.id,
-                company_id = user.company_id,
+                user_id    = order_user.id,
+                company_id = order_user.company_id,
             )
             db.session.add(movement)
 
@@ -349,7 +362,7 @@ def _conclude_order(o, user):
                 product_id   = product_id,
                 client_id    = o.client_id,
                 order_id     = o.id,
-                user_id      = user.id,
-                company_id   = user.company_id,
+                user_id      = order_user.id,
+                company_id   = order_user.company_id,
             )
             db.session.add(record)
