@@ -7,10 +7,6 @@ from datetime import date
 auth_bp = Blueprint("auth", __name__)
 
 
-# =========================
-# REGISTRAR EMPRESA + ADMIN
-# =========================
-
 @auth_bp.route("/register", methods=["POST"])
 def register():
     data = request.get_json()
@@ -34,7 +30,6 @@ def register():
     if User.query.filter_by(email=email).first():
         return jsonify({"msg": "Este email já está cadastrado"}), 409
 
-    # 1. Cria a empresa
     new_company = Company(
         name       = company_name,
         plan       = "free",
@@ -42,9 +37,8 @@ def register():
         active     = True,
     )
     db.session.add(new_company)
-    db.session.flush()  # gera o ID da empresa antes do commit
+    db.session.flush()
 
-    # 2. Cria o usuário admin vinculado à empresa
     new_user = User(
         email      = email,
         name       = name,
@@ -53,7 +47,6 @@ def register():
         active     = True,
     )
     new_user.set_password(password)
-
     db.session.add(new_user)
     db.session.commit()
 
@@ -64,10 +57,6 @@ def register():
         "plan":         new_company.plan,
     }), 201
 
-
-# =========================
-# LOGIN
-# =========================
 
 @auth_bp.route("/login", methods=["POST"])
 def login():
@@ -90,11 +79,11 @@ def login():
     if not user.active:
         return jsonify({"msg": "Usuário inativo. Contate o administrador."}), 403
 
-    # token carrega user_id — company_id e role ficam no banco
     token = create_access_token(identity=str(user.id))
 
     return jsonify({
         "token":        token,
+        "user_id":      user.id,        # ← ADICIONADO
         "email":        user.email,
         "name":         user.name or "",
         "role":         user.role,
@@ -103,10 +92,6 @@ def login():
         "plan":         user.company.plan if user.company else "free",
     }), 200
 
-
-# =========================
-# PERFIL DO USUÁRIO LOGADO
-# =========================
 
 @auth_bp.route("/me", methods=["GET"])
 @jwt_required()
