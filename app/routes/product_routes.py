@@ -11,6 +11,13 @@ def _get_user(user_id):
     return User.query.get(int(user_id))
 
 
+def _find_product(product_id, user):
+    """Busca produto por company_id (multi-tenant) ou user_id (fallback)."""
+    if user.company_id:
+        return Product.query.filter_by(id=product_id, company_id=user.company_id).first()
+    return Product.query.filter_by(id=product_id, user_id=user.id).first()
+
+
 def _serialize(p):
     return {
         "id":             p.id,
@@ -35,12 +42,10 @@ def _serialize(p):
 @jwt_required()
 def get_products():
     user = _get_user(get_jwt_identity())
-
     if user.company_id:
         products = Product.query.filter_by(company_id=user.company_id).order_by(Product.name).all()
     else:
         products = Product.query.filter_by(user_id=user.id).order_by(Product.name).all()
-
     return jsonify([_serialize(p) for p in products]), 200
 
 
@@ -48,7 +53,7 @@ def get_products():
 @jwt_required()
 def get_product(product_id):
     user = _get_user(get_jwt_identity())
-    p    = Product.query.filter_by(id=product_id, user_id=user.id).first()
+    p    = _find_product(product_id, user)
     if not p:
         return jsonify({"msg": "Produto não encontrado"}), 404
     return jsonify(_serialize(p)), 200
@@ -92,14 +97,12 @@ def create_product():
         company_id  = user.company_id,
     )
 
-    # se for produto com estoque inicial > 0, define custo médio
     if type_ == "product" and stock_qty_initial > 0:
         p.stock_avg_cost = cost_val
 
     db.session.add(p)
-    db.session.flush()  # gera p.id antes do commit
+    db.session.flush()
 
-    # registra movimentação de estoque inicial
     if type_ == "product" and stock_qty_initial > 0:
         mov = StockMovement(
             type       = "in",
@@ -121,7 +124,7 @@ def create_product():
 @jwt_required()
 def update_product(product_id):
     user = _get_user(get_jwt_identity())
-    p    = Product.query.filter_by(id=product_id, user_id=user.id).first()
+    p    = _find_product(product_id, user)
     if not p:
         return jsonify({"msg": "Produto não encontrado"}), 404
 
@@ -144,7 +147,7 @@ def update_product(product_id):
 @jwt_required()
 def toggle_product(product_id):
     user = _get_user(get_jwt_identity())
-    p    = Product.query.filter_by(id=product_id, user_id=user.id).first()
+    p    = _find_product(product_id, user)
     if not p:
         return jsonify({"msg": "Produto não encontrado"}), 404
     p.active = not p.active
@@ -156,7 +159,7 @@ def toggle_product(product_id):
 @jwt_required()
 def delete_product(product_id):
     user = _get_user(get_jwt_identity())
-    p    = Product.query.filter_by(id=product_id, user_id=user.id).first()
+    p    = _find_product(product_id, user)
     if not p:
         return jsonify({"msg": "Produto não encontrado"}), 404
     db.session.delete(p)
