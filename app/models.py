@@ -2,9 +2,6 @@ from app.extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date
 
-# =========================
-# TABELA DE EMPRESAS
-# =========================
 class Company(db.Model):
     __tablename__ = "companies"
 
@@ -12,13 +9,11 @@ class Company(db.Model):
     name       = db.Column(db.String(200), nullable=False)
     cnpj       = db.Column(db.String(30),  nullable=True)
     address    = db.Column(db.String(300), nullable=True)
-    logo       = db.Column(db.Text,        nullable=True)   # base64
+    logo       = db.Column(db.Text,        nullable=True)
     plan       = db.Column(db.String(20),  nullable=False, default="free")
-    # "free" | "pro" | "business"
     created_at = db.Column(db.String(20),  nullable=True)
     active     = db.Column(db.Boolean,     nullable=False, default=True)
 
-    # relacionamentos
     users           = db.relationship("User",          backref="company", lazy=True)
     transactions    = db.relationship("Transaction",   backref="company", lazy=True)
     bills           = db.relationship("Bill",          backref="company", lazy=True)
@@ -30,35 +25,25 @@ class Company(db.Model):
     service_records = db.relationship("ServiceRecord", backref="company", lazy=True)
 
 
-# =========================
-# TABELA DE USUÁRIOS
-# ── campos novos: company_id, role
-# =========================
 class User(db.Model):
     __tablename__ = "users"
 
-    id       = db.Column(db.Integer, primary_key=True)
-    email    = db.Column(db.String(120), unique=True, nullable=False)
-    password = db.Column(db.String(200), nullable=False)
-    name     = db.Column(db.String(120), nullable=True)
-    active   = db.Column(db.Boolean,     nullable=False, default=True)
+    id           = db.Column(db.Integer,     primary_key=True)
+    email        = db.Column(db.String(120), unique=True, nullable=False)
+    password     = db.Column(db.String(200), nullable=False)
+    name         = db.Column(db.String(120), nullable=True)
+    active       = db.Column(db.Boolean,     nullable=False, default=True)
+    role         = db.Column(db.String(20),  nullable=False, default="admin")
+    account_type = db.Column(db.String(20),  nullable=False, default="business")
+    # "business" | "personal"
 
-    # ── multi-tenant ──
     company_id = db.Column(
         db.Integer,
         db.ForeignKey("companies.id", name="fk_user_company"),
-        nullable=True   # nullable para não quebrar usuários existentes
+        nullable=True
     )
 
-    # ── papel do usuário ──
-    # "admin"     → acesso total
-    # "seller"    → orçamentos, vendas, clientes
-    # "financial" → transações, contas, analytics
-    # "stock"     → produtos, estoque
-    # "viewer"    → só leitura em tudo
-    role = db.Column(db.String(20), nullable=False, default="admin")
-
-    # campos legados de empresa (mantidos para retrocompatibilidade)
+    # campos legados
     company_name    = db.Column(db.String(200), nullable=True)
     company_cnpj    = db.Column(db.String(30),  nullable=True)
     company_address = db.Column(db.String(300), nullable=True)
@@ -87,73 +72,43 @@ class User(db.Model):
         return self.role in ["admin", "stock"]
 
 
-# =========================
-# TABELA DE TRANSAÇÕES
-# =========================
 class Transaction(db.Model):
     __tablename__ = "transactions"
 
-    id          = db.Column(db.Integer, primary_key=True)
-    description = db.Column(db.String(200), nullable=False)
-    amount      = db.Column(db.Float,       nullable=False)
-    type        = db.Column(db.String(10),  nullable=False)   # "income" | "expense"
-    category    = db.Column(db.String(100), nullable=True)
-    date        = db.Column(db.String(20),  nullable=True)
-    source      = db.Column(db.String(20),  nullable=False, default="manual")
-    # "manual" | "sale" | "bill"
+    id          = db.Column(db.Integer,      primary_key=True)
+    description = db.Column(db.String(200),  nullable=False)
+    amount      = db.Column(db.Float,        nullable=False)
+    type        = db.Column(db.String(10),   nullable=False)
+    category    = db.Column(db.String(100),  nullable=True)
+    date        = db.Column(db.String(20),   nullable=True)
+    source      = db.Column(db.String(20),   nullable=False, default="manual")
 
-    company_id = db.Column(
-        db.Integer,
-        db.ForeignKey("companies.id", name="fk_transaction_company"),
-        nullable=True
-    )
-    user_id = db.Column(
-        db.Integer,
-        db.ForeignKey("users.id", name="fk_transaction_user"),
-        nullable=False
-    )
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_transaction_company"), nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_transaction_user"),    nullable=False)
 
 
-# =========================
-# TABELA DE CONTAS
-# =========================
 class Bill(db.Model):
     __tablename__ = "bills"
 
-    id             = db.Column(db.Integer, primary_key=True)
-    description    = db.Column(db.String(200), nullable=False)
-    amount         = db.Column(db.Float,       nullable=False)
-    type           = db.Column(db.String(10),  nullable=False)
-    status         = db.Column(db.String(10),  nullable=False, default="pending")
-    due_date       = db.Column(db.String(20),  nullable=False)
-    paid_date      = db.Column(db.String(20),  nullable=True)
-    category       = db.Column(db.String(100), nullable=True)
-    notes          = db.Column(db.String(500), nullable=True)
+    id          = db.Column(db.Integer,     primary_key=True)
+    description = db.Column(db.String(200), nullable=False)
+    amount      = db.Column(db.Float,       nullable=False)
+    type        = db.Column(db.String(10),  nullable=False)
+    status      = db.Column(db.String(10),  nullable=False, default="pending")
+    due_date    = db.Column(db.String(20),  nullable=False)
+    paid_date   = db.Column(db.String(20),  nullable=True)
+    category    = db.Column(db.String(100), nullable=True)
+    notes       = db.Column(db.String(500), nullable=True)
 
-    company_id = db.Column(
-        db.Integer,
-        db.ForeignKey("companies.id", name="fk_bill_company"),
-        nullable=True
-    )
-    user_id = db.Column(
-        db.Integer,
-        db.ForeignKey("users.id", name="fk_bill_user"),
-        nullable=False
-    )
-    transaction_id = db.Column(
-        db.Integer,
-        db.ForeignKey("transactions.id", name="fk_bill_transaction"),
-        nullable=True
-    )
+    company_id     = db.Column(db.Integer, db.ForeignKey("companies.id",    name="fk_bill_company"),     nullable=True)
+    user_id        = db.Column(db.Integer, db.ForeignKey("users.id",        name="fk_bill_user"),        nullable=False)
+    transaction_id = db.Column(db.Integer, db.ForeignKey("transactions.id", name="fk_bill_transaction"), nullable=True)
 
 
-# =========================
-# TABELA DE PRODUTOS/SERVIÇOS
-# =========================
 class Product(db.Model):
     __tablename__ = "products"
 
-    id             = db.Column(db.Integer, primary_key=True)
+    id             = db.Column(db.Integer,     primary_key=True)
     name           = db.Column(db.String(200), nullable=False)
     description    = db.Column(db.String(500), nullable=True)
     type           = db.Column(db.String(20),  nullable=False, default="service")
@@ -167,16 +122,8 @@ class Product(db.Model):
     stock_avg_cost = db.Column(db.Float,       nullable=False, default=0.0)
     services_count = db.Column(db.Integer,     nullable=False, default=0)
 
-    company_id = db.Column(
-        db.Integer,
-        db.ForeignKey("companies.id", name="fk_product_company"),
-        nullable=True
-    )
-    user_id = db.Column(
-        db.Integer,
-        db.ForeignKey("users.id", name="fk_product_user"),
-        nullable=False
-    )
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_product_company"), nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_product_user"),    nullable=False)
 
     stock_movements = db.relationship("StockMovement", backref="product", lazy=True)
     service_records = db.relationship("ServiceRecord", backref="product", lazy=True)
@@ -196,13 +143,10 @@ class Product(db.Model):
         return self.type == "product" and self.stock_qty <= self.stock_min
 
 
-# =========================
-# TABELA DE ORÇAMENTOS
-# =========================
 class Quote(db.Model):
     __tablename__ = "quotes"
 
-    id              = db.Column(db.Integer, primary_key=True)
+    id              = db.Column(db.Integer,     primary_key=True)
     number          = db.Column(db.String(30),  nullable=False)
     client_name     = db.Column(db.String(200), nullable=False)
     client_email    = db.Column(db.String(200), nullable=True)
@@ -219,30 +163,15 @@ class Quote(db.Model):
     total           = db.Column(db.Float,       nullable=False, default=0.0)
     created_at      = db.Column(db.String(20),  nullable=True)
 
-    company_id = db.Column(
-        db.Integer,
-        db.ForeignKey("companies.id", name="fk_quote_company"),
-        nullable=True
-    )
-    client_id = db.Column(
-        db.Integer,
-        db.ForeignKey("clients.id", name="fk_quote_client"),
-        nullable=True
-    )
-    user_id = db.Column(
-        db.Integer,
-        db.ForeignKey("users.id", name="fk_quote_user"),
-        nullable=False
-    )
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_quote_company"), nullable=True)
+    client_id  = db.Column(db.Integer, db.ForeignKey("clients.id",   name="fk_quote_client"),  nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_quote_user"),    nullable=False)
 
 
-# =========================
-# TABELA DE CLIENTES
-# =========================
 class Client(db.Model):
     __tablename__ = "clients"
 
-    id         = db.Column(db.Integer, primary_key=True)
+    id         = db.Column(db.Integer,     primary_key=True)
     name       = db.Column(db.String(200), nullable=False)
     email      = db.Column(db.String(200), nullable=True)
     phone      = db.Column(db.String(50),  nullable=True)
@@ -251,29 +180,18 @@ class Client(db.Model):
     notes      = db.Column(db.String(500), nullable=True)
     created_at = db.Column(db.String(20),  nullable=True)
 
-    company_id = db.Column(
-        db.Integer,
-        db.ForeignKey("companies.id", name="fk_client_company"),
-        nullable=True
-    )
-    user_id = db.Column(
-        db.Integer,
-        db.ForeignKey("users.id", name="fk_client_user"),
-        nullable=False
-    )
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_client_company"), nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_client_user"),    nullable=False)
 
     orders          = db.relationship("Order",         backref="client", lazy=True)
     service_records = db.relationship("ServiceRecord", backref="client", lazy=True)
     quotes          = db.relationship("Quote",         backref="client", lazy=True)
 
 
-# =========================
-# TABELA DE PEDIDOS / VENDAS
-# =========================
 class Order(db.Model):
     __tablename__ = "orders"
 
-    id            = db.Column(db.Integer, primary_key=True)
+    id            = db.Column(db.Integer,     primary_key=True)
     number        = db.Column(db.String(30),  nullable=False)
     status        = db.Column(db.String(20),  nullable=False, default="open")
     origin        = db.Column(db.String(20),  nullable=False, default="direct")
@@ -286,102 +204,40 @@ class Order(db.Model):
     created_at    = db.Column(db.String(20),  nullable=True)
     finished_at   = db.Column(db.String(20),  nullable=True)
 
-    company_id = db.Column(
-        db.Integer,
-        db.ForeignKey("companies.id", name="fk_order_company"),
-        nullable=True
-    )
-    client_id = db.Column(
-        db.Integer,
-        db.ForeignKey("clients.id", name="fk_order_client"),
-        nullable=False
-    )
-    quote_id = db.Column(
-        db.Integer,
-        db.ForeignKey("quotes.id", name="fk_order_quote"),
-        nullable=True
-    )
-    transaction_id = db.Column(
-        db.Integer,
-        db.ForeignKey("transactions.id", name="fk_order_transaction"),
-        nullable=True
-    )
-    user_id = db.Column(
-        db.Integer,
-        db.ForeignKey("users.id", name="fk_order_user"),
-        nullable=False
-    )
+    company_id     = db.Column(db.Integer, db.ForeignKey("companies.id",    name="fk_order_company"),     nullable=True)
+    client_id      = db.Column(db.Integer, db.ForeignKey("clients.id",      name="fk_order_client"),      nullable=False)
+    quote_id       = db.Column(db.Integer, db.ForeignKey("quotes.id",       name="fk_order_quote"),       nullable=True)
+    transaction_id = db.Column(db.Integer, db.ForeignKey("transactions.id", name="fk_order_transaction"), nullable=True)
+    user_id        = db.Column(db.Integer, db.ForeignKey("users.id",        name="fk_order_user"),        nullable=False)
 
 
-# =========================
-# TABELA DE MOVIMENTAÇÕES DE ESTOQUE
-# =========================
 class StockMovement(db.Model):
     __tablename__ = "stock_movements"
 
-    id         = db.Column(db.Integer, primary_key=True)
-    type       = db.Column(db.String(10), nullable=False)
-    qty        = db.Column(db.Float,      nullable=False)
-    cost       = db.Column(db.Float,      nullable=True)
-    reason     = db.Column(db.String(200),nullable=True)
-    date       = db.Column(db.String(20), nullable=True)
+    id         = db.Column(db.Integer,      primary_key=True)
+    type       = db.Column(db.String(10),   nullable=False)
+    qty        = db.Column(db.Float,        nullable=False)
+    cost       = db.Column(db.Float,        nullable=True)
+    reason     = db.Column(db.String(200),  nullable=True)
+    date       = db.Column(db.String(20),   nullable=True)
 
-    company_id = db.Column(
-        db.Integer,
-        db.ForeignKey("companies.id", name="fk_stock_company"),
-        nullable=True
-    )
-    product_id = db.Column(
-        db.Integer,
-        db.ForeignKey("products.id", name="fk_stock_product"),
-        nullable=False
-    )
-    order_id = db.Column(
-        db.Integer,
-        db.ForeignKey("orders.id", name="fk_stock_order"),
-        nullable=True
-    )
-    user_id = db.Column(
-        db.Integer,
-        db.ForeignKey("users.id", name="fk_stock_user"),
-        nullable=False
-    )
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_stock_company"),  nullable=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id",  name="fk_stock_product"),  nullable=False)
+    order_id   = db.Column(db.Integer, db.ForeignKey("orders.id",    name="fk_stock_order"),    nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_stock_user"),     nullable=False)
 
 
-# =========================
-# TABELA DE REGISTROS DE SERVIÇOS
-# =========================
 class ServiceRecord(db.Model):
     __tablename__ = "service_records"
 
-    id           = db.Column(db.Integer, primary_key=True)
+    id           = db.Column(db.Integer,     primary_key=True)
     date         = db.Column(db.String(20),  nullable=True)
     duration_min = db.Column(db.Integer,     nullable=True)
     amount       = db.Column(db.Float,       nullable=False, default=0.0)
     notes        = db.Column(db.String(500), nullable=True)
 
-    company_id = db.Column(
-        db.Integer,
-        db.ForeignKey("companies.id", name="fk_svcrecord_company"),
-        nullable=True
-    )
-    product_id = db.Column(
-        db.Integer,
-        db.ForeignKey("products.id", name="fk_svcrecord_product"),
-        nullable=False
-    )
-    client_id = db.Column(
-        db.Integer,
-        db.ForeignKey("clients.id", name="fk_svcrecord_client"),
-        nullable=True
-    )
-    order_id = db.Column(
-        db.Integer,
-        db.ForeignKey("orders.id", name="fk_svcrecord_order"),
-        nullable=True
-    )
-    user_id = db.Column(
-        db.Integer,
-        db.ForeignKey("users.id", name="fk_svcrecord_user"),
-        nullable=False
-    )
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_svcrecord_company"), nullable=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id",  name="fk_svcrecord_product"), nullable=False)
+    client_id  = db.Column(db.Integer, db.ForeignKey("clients.id",   name="fk_svcrecord_client"),  nullable=True)
+    order_id   = db.Column(db.Integer, db.ForeignKey("orders.id",    name="fk_svcrecord_order"),   nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_svcrecord_user"),    nullable=False)

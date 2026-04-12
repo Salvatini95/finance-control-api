@@ -7,10 +7,12 @@ from datetime import date
 auth_bp = Blueprint("auth", __name__)
 
 
+# =========================
+# REGISTRO EMPRESA (PJ)
+# =========================
 @auth_bp.route("/register", methods=["POST"])
 def register():
     data = request.get_json()
-
     if not data:
         return jsonify({"msg": "Nenhum dado enviado"}), 400
 
@@ -40,11 +42,12 @@ def register():
     db.session.flush()
 
     new_user = User(
-        email      = email,
-        name       = name,
-        role       = "admin",
-        company_id = new_company.id,
-        active     = True,
+        email        = email,
+        name         = name,
+        role         = "admin",
+        account_type = "business",
+        company_id   = new_company.id,
+        active       = True,
     )
     new_user.set_password(password)
     db.session.add(new_user)
@@ -58,10 +61,52 @@ def register():
     }), 201
 
 
+# =========================
+# REGISTRO PESSOAL (PF)
+# =========================
+@auth_bp.route("/register/personal", methods=["POST"])
+def register_personal():
+    data = request.get_json()
+    if not data:
+        return jsonify({"msg": "Nenhum dado enviado"}), 400
+
+    email    = data.get("email", "").strip().lower()
+    password = data.get("password", "").strip()
+    name     = data.get("name", "").strip()
+
+    if not email or not password:
+        return jsonify({"msg": "Email e senha são obrigatórios"}), 400
+    if not name:
+        return jsonify({"msg": "Nome é obrigatório"}), 400
+    if len(password) < 6:
+        return jsonify({"msg": "A senha deve ter no mínimo 6 caracteres"}), 400
+    if User.query.filter_by(email=email).first():
+        return jsonify({"msg": "Este email já está cadastrado"}), 409
+
+    new_user = User(
+        email        = email,
+        name         = name,
+        role         = "admin",
+        account_type = "personal",
+        company_id   = None,
+        active       = True,
+    )
+    new_user.set_password(password)
+    db.session.add(new_user)
+    db.session.commit()
+
+    return jsonify({
+        "msg":  "Conta pessoal criada com sucesso",
+        "plan": "free",
+    }), 201
+
+
+# =========================
+# LOGIN
+# =========================
 @auth_bp.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
-
     if not data:
         return jsonify({"msg": "Nenhum dado enviado"}), 400
 
@@ -75,7 +120,6 @@ def login():
 
     if not user or not user.check_password(password):
         return jsonify({"msg": "Email ou senha inválidos"}), 401
-
     if not user.active:
         return jsonify({"msg": "Usuário inativo. Contate o administrador."}), 403
 
@@ -83,22 +127,25 @@ def login():
 
     return jsonify({
         "token":        token,
-        "user_id":      user.id,        # ← ADICIONADO
+        "user_id":      user.id,
         "email":        user.email,
         "name":         user.name or "",
         "role":         user.role,
+        "account_type": user.account_type,
         "company_id":   user.company_id,
         "company_name": user.company.name if user.company else "",
         "plan":         user.company.plan if user.company else "free",
     }), 200
 
 
+# =========================
+# PERFIL
+# =========================
 @auth_bp.route("/me", methods=["GET"])
 @jwt_required()
 def me():
     user_id = int(get_jwt_identity())
     user    = User.query.get(user_id)
-
     if not user:
         return jsonify({"msg": "Usuário não encontrado"}), 404
 
@@ -107,6 +154,7 @@ def me():
         "name":         user.name,
         "email":        user.email,
         "role":         user.role,
+        "account_type": user.account_type,
         "company_id":   user.company_id,
         "company_name": user.company.name if user.company else "",
         "plan":         user.company.plan if user.company else "free",
