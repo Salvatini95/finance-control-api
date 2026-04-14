@@ -13,13 +13,12 @@ from app.routes.client_routes import client_bp
 from app.routes.order_routes import order_bp
 from app.routes.stock_routes import stock_bp
 from app.routes.company_routes import company_bp
+from app.routes.goal_routes import goal_bp
 
 load_dotenv()
 
-
 def create_app():
     app = Flask(__name__)
-
     app.config["SECRET_KEY"]                     = os.environ.get("SECRET_KEY")
     app.config["JWT_SECRET_KEY"]                 = os.environ.get("JWT_SECRET_KEY")
     app.config["SQLALCHEMY_DATABASE_URI"]        = os.environ.get("DATABASE_URL")
@@ -55,5 +54,6 @@ def create_app():
     app.register_blueprint(order_bp,       url_prefix="/api")
     app.register_blueprint(stock_bp,       url_prefix="/api")
     app.register_blueprint(company_bp,     url_prefix="/api")
+    app.register_blueprint(goal_bp,        url_prefix="/api")
 
     return app

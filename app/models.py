@@ -35,7 +35,6 @@ class User(db.Model):
     active       = db.Column(db.Boolean,     nullable=False, default=True)
     role         = db.Column(db.String(20),  nullable=False, default="admin")
     account_type = db.Column(db.String(20),  nullable=False, default="business")
-    # "business" | "personal"
 
     company_id = db.Column(
         db.Integer,
@@ -43,7 +42,6 @@ class User(db.Model):
         nullable=True
     )
 
-    # campos legados
     company_name    = db.Column(db.String(200), nullable=True)
     company_cnpj    = db.Column(db.String(30),  nullable=True)
     company_address = db.Column(db.String(300), nullable=True)
@@ -56,20 +54,16 @@ class User(db.Model):
         return check_password_hash(self.password, raw_password)
 
     @property
-    def is_admin(self):
-        return self.role == "admin"
+    def is_admin(self): return self.role == "admin"
 
     @property
-    def can_sell(self):
-        return self.role in ["admin", "seller"]
+    def can_sell(self): return self.role in ["admin", "seller"]
 
     @property
-    def can_finance(self):
-        return self.role in ["admin", "financial"]
+    def can_finance(self): return self.role in ["admin", "financial"]
 
     @property
-    def can_stock(self):
-        return self.role in ["admin", "stock"]
+    def can_stock(self): return self.role in ["admin", "stock"]
 
 
 class Transaction(db.Model):
@@ -129,18 +123,15 @@ class Product(db.Model):
     service_records = db.relationship("ServiceRecord", backref="product", lazy=True)
 
     @property
-    def profit(self):
-        return self.price - self.cost
+    def profit(self): return self.price - self.cost
 
     @property
     def margin(self):
-        if self.price == 0:
-            return 0.0
+        if self.price == 0: return 0.0
         return round((self.profit / self.price) * 100, 2)
 
     @property
-    def stock_alert(self):
-        return self.type == "product" and self.stock_qty <= self.stock_min
+    def stock_alert(self): return self.type == "product" and self.stock_qty <= self.stock_min
 
 
 class Quote(db.Model):
@@ -241,3 +232,32 @@ class ServiceRecord(db.Model):
     client_id  = db.Column(db.Integer, db.ForeignKey("clients.id",   name="fk_svcrecord_client"),  nullable=True)
     order_id   = db.Column(db.Integer, db.ForeignKey("orders.id",    name="fk_svcrecord_order"),   nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_svcrecord_user"),    nullable=False)
+
+
+# ✅ NOVO MODEL — METAS FINANCEIRAS
+class Goal(db.Model):
+    __tablename__ = "goals"
+
+    id          = db.Column(db.Integer,     primary_key=True)
+    name        = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.String(500), nullable=True)
+    target      = db.Column(db.Float,       nullable=False)           # valor alvo
+    current     = db.Column(db.Float,       nullable=False, default=0.0)  # valor atual
+    category    = db.Column(db.String(100), nullable=True)
+    icon        = db.Column(db.String(10),  nullable=True, default="🎯")
+    deadline    = db.Column(db.String(20),  nullable=True)            # data limite
+    status      = db.Column(db.String(20),  nullable=False, default="active")
+    # "active" | "completed" | "cancelled"
+    created_at  = db.Column(db.String(20),  nullable=True)
+
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_goal_company"), nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_goal_user"),    nullable=False)
+
+    @property
+    def progress(self):
+        if self.target == 0: return 0.0
+        return round(min((self.current / self.target) * 100, 100), 1)
+
+    @property
+    def remaining(self):
+        return max(self.target - self.current, 0)
