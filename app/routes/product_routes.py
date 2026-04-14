@@ -12,7 +12,6 @@ def _get_user(user_id):
 
 
 def _find_product(product_id, user):
-    """Busca produto por company_id (multi-tenant) ou user_id (fallback)."""
     if user.company_id:
         return Product.query.filter_by(id=product_id, company_id=user.company_id).first()
     return Product.query.filter_by(id=product_id, user_id=user.id).first()
@@ -21,6 +20,7 @@ def _find_product(product_id, user):
 def _serialize(p):
     return {
         "id":             p.id,
+        "sku":            p.sku,
         "name":           p.name,
         "description":    p.description,
         "type":           p.type,
@@ -84,6 +84,7 @@ def create_product():
 
     p = Product(
         name        = name,
+        sku         = data.get("sku", "").strip() or None,
         description = data.get("description", "").strip(),
         type        = type_,
         unit        = data.get("unit", "un").strip(),
@@ -130,6 +131,7 @@ def update_product(product_id):
 
     data          = request.get_json()
     p.name        = data.get("name",        p.name)
+    p.sku         = data.get("sku",         p.sku)
     p.description = data.get("description", p.description)
     p.type        = data.get("type",        p.type)
     p.unit        = data.get("unit",        p.unit)

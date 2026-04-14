@@ -104,6 +104,7 @@ class Product(db.Model):
 
     id             = db.Column(db.Integer,     primary_key=True)
     name           = db.Column(db.String(200), nullable=False)
+    sku = db.Column(db.String(100), nullable=True)
     description    = db.Column(db.String(500), nullable=True)
     type           = db.Column(db.String(20),  nullable=False, default="service")
     unit           = db.Column(db.String(50),  nullable=True)
