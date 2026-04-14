@@ -6,7 +6,6 @@ from datetime import date
 import json
 
 order_bp = Blueprint("orders", __name__)
-ORDER_PREFIX = "OS"
 
 
 def _get_user(user_id):
@@ -31,12 +30,52 @@ def _find_client(client_id, user):
     return Client.query.filter_by(id=client_id, user_id=user.id).first()
 
 
-def _next_order_number(user):
+def _detect_prefix(items):
+    """
+    ✅ Detecta o prefixo correto baseado nos itens:
+    - Só serviços     → OS (Ordem de Serviço)
+    - Só produtos     → PED (Pedido)
+    - Misto ou vazio  → PED (padrão produto)
+    """
+    has_product = False
+    has_service = False
+
+    for item in items:
+        product_id = item.get("product_id")
+        if not product_id:
+            continue
+        product = Product.query.get(product_id)
+        if not product:
+            continue
+        if product.type == "service":
+            has_service = True
+        else:
+            has_product = True
+
+    if has_service and not has_product:
+        return "OS"
+    return "PED"
+
+
+def _next_order_number(user, prefix="PED"):
+    """
+    ✅ Gera número sequencial por prefixo e ano.
+    Ex: PED-2026-001, OS-2026-004
+    """
+    year = date.today().year
+
     if user.company_id:
-        count = Order.query.filter_by(company_id=user.company_id).count() + 1
+        all_orders = Order.query.filter_by(company_id=user.company_id).all()
     else:
-        count = Order.query.filter_by(user_id=user.id).count() + 1
-    return f"{ORDER_PREFIX}-{date.today().year}-{count:03d}"
+        all_orders = Order.query.filter_by(user_id=user.id).all()
+
+    # conta apenas os do mesmo prefixo e ano
+    count = sum(
+        1 for o in all_orders
+        if o.number.startswith(f"{prefix}-{year}")
+    ) + 1
+
+    return f"{prefix}-{year}-{count:03d}"
 
 
 def _serialize_order(o):
@@ -58,6 +97,8 @@ def _serialize_order(o):
         "quote_id":       o.quote_id,
         "transaction_id": o.transaction_id,
         "user_id":        o.user_id,
+        # ✅ expõe o tipo de documento para o frontend
+        "doc_type":       "OS" if o.number.startswith("OS-") else "PED",
     }
 
 
@@ -103,8 +144,11 @@ def create_order():
     subtotal = sum(float(i.get("qty", 0)) * float(i.get("price", 0)) for i in items)
     total    = subtotal - subtotal * (discount / 100)
 
+    # ✅ detecta prefixo baseado nos itens
+    prefix = _detect_prefix(items)
+
     new_order = Order(
-        number        = _next_order_number(user),
+        number        = _next_order_number(user, prefix),
         status        = data.get("status", "open"),
         origin        = "direct",
         notes         = data.get("notes", ""),
@@ -121,7 +165,12 @@ def create_order():
     )
     db.session.add(new_order)
     db.session.commit()
-    return jsonify({"msg": "Venda criada com sucesso", "id": new_order.id, "number": new_order.number}), 201
+    return jsonify({
+        "msg":    "Venda criada com sucesso",
+        "id":     new_order.id,
+        "number": new_order.number,
+        "prefix": prefix,
+    }), 201
 
 
 @order_bp.route("/orders/from-quote/<int:quote_id>", methods=["POST"])
@@ -162,8 +211,11 @@ def create_order_from_quote(quote_id):
 
     items = json.loads(quote.items_json or "[]")
 
+    # ✅ detecta prefixo baseado nos itens do orçamento
+    prefix = _detect_prefix(items)
+
     new_order = Order(
-        number        = _next_order_number(user),
+        number        = _next_order_number(user, prefix),
         status        = "open",
         origin        = "quote",
         notes         = quote.notes or "",
@@ -180,7 +232,12 @@ def create_order_from_quote(quote_id):
     )
     db.session.add(new_order)
     db.session.commit()
-    return jsonify({"msg": "Venda criada a partir do orçamento", "id": new_order.id, "number": new_order.number}), 201
+    return jsonify({
+        "msg":    "Venda criada a partir do orçamento",
+        "id":     new_order.id,
+        "number": new_order.number,
+        "prefix": prefix,
+    }), 201
 
 
 @order_bp.route("/orders/<int:order_id>", methods=["PUT"])
@@ -221,7 +278,6 @@ def change_order_status(order_id):
     if not o:
         return jsonify({"msg": "Venda não encontrada"}), 404
 
-    # ✅ vendedor só pode alterar status das próprias vendas
     if user.role == "seller" and o.user_id != user.id:
         return jsonify({"msg": "Você não tem permissão para alterar esta venda"}), 403
 
@@ -257,7 +313,6 @@ def complete_order(order_id):
     if not o:
         return jsonify({"msg": "Venda não encontrada"}), 404
 
-    # ✅ vendedor só pode concluir as próprias vendas
     if user.role == "seller" and o.user_id != user.id:
         return jsonify({"msg": "Você não tem permissão para concluir esta venda"}), 403
 
@@ -270,7 +325,11 @@ def complete_order(order_id):
     _conclude_order(o)
     db.session.commit()
 
-    return jsonify({"msg": f"Venda {o.number} concluída!", "transaction_id": o.transaction_id, "total": o.total}), 200
+    return jsonify({
+        "msg":            f"Venda {o.number} concluída!",
+        "transaction_id": o.transaction_id,
+        "total":          o.total,
+    }), 200
 
 
 @order_bp.route("/orders/<int:order_id>", methods=["DELETE"])
@@ -282,7 +341,6 @@ def delete_order(order_id):
     if not o:
         return jsonify({"msg": "Venda não encontrada"}), 404
 
-    # ✅ vendedor só pode deletar as próprias vendas
     if user.role == "seller" and o.user_id != user.id:
         return jsonify({"msg": "Você não tem permissão para remover esta venda"}), 403
 
@@ -299,22 +357,20 @@ def delete_order(order_id):
 # =========================
 # HELPER — CONCLUIR VENDA
 # =========================
-
 def _conclude_order(o):
-    """Cria transação, baixa estoque e registra serviços.
-    ✅ Usa sempre o user_id da ORDEM, não de quem está concluindo.
-    """
     o.finished_at = str(date.today())
     items = json.loads(o.items_json or "[]")
 
-    # ✅ usa o dono da venda, não o usuário logado
     order_user = User.query.get(o.user_id)
     if not order_user:
         return
 
     client_name = o.client.name if o.client else "Cliente"
+
+    # ✅ descrição usa o tipo correto (Pedido ou O.S.)
+    doc_type    = "O.S." if o.number.startswith("OS-") else "Pedido"
     transaction = Transaction(
-        description = f"[Venda] {o.number} — {client_name}",
+        description = f"[{doc_type}] {o.number} — {client_name}",
         amount      = o.total,
         type        = "income",
         category    = "Vendas",
@@ -343,7 +399,7 @@ def _conclude_order(o):
                 type       = "out",
                 qty        = qty,
                 cost       = None,
-                reason     = f"Venda {o.number}",
+                reason     = f"{doc_type} {o.number}",
                 date       = str(date.today()),
                 product_id = product_id,
                 order_id   = o.id,
@@ -358,7 +414,7 @@ def _conclude_order(o):
                 date         = str(date.today()),
                 duration_min = None,
                 amount       = float(item.get("price", product.price)) * qty,
-                notes        = f"Venda {o.number}",
+                notes        = f"{doc_type} {o.number}",
                 product_id   = product_id,
                 client_id    = o.client_id,
                 order_id     = o.id,
