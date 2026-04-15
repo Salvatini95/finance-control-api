@@ -24,13 +24,17 @@ load_dotenv()
 
 def create_app():
     app = Flask(__name__)
-
+    
+    print("🔥 APP INICIALIZADO")
+    
     app.config["SECRET_KEY"]                     = os.environ.get("SECRET_KEY")
     app.config["JWT_SECRET_KEY"]                 = os.environ.get("JWT_SECRET_KEY")
     app.config["SQLALCHEMY_DATABASE_URI"]        = os.environ.get("DATABASE_URL")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["MAX_CONTENT_LENGTH"]             = 4 * 1024 * 1024
     app.config["JWT_ACCESS_TOKEN_EXPIRES"]       = timedelta(hours=8)
+
+    
 
     CORS(
         app,
