@@ -55,22 +55,19 @@ def register():
         account_type = "business",
         company_id   = new_company.id,
         active       = True,
-        # ⚠️ ainda não usamos no banco (próximo passo)
     )
     new_user.set_password(password)
 
     db.session.add(new_user)
     db.session.commit()
 
-    # 📩 envio de email (não quebra nada se falhar)
-    try:
-        send_verification_email(
-            to_email=email,
-            name=name,
-            token=token
-        )
-    except Exception as e:
-        print(f"Erro ao enviar email: {e}")
+    # 📩 envio de email (DEBUG ATIVO)
+    result = send_verification_email(
+        to_email=email,
+        name=name,
+        token=token
+    )
+    print("EMAIL RESULT (PJ):", result)
 
     return jsonify({
         "msg":          "Empresa e usuário criados com sucesso",
@@ -118,15 +115,13 @@ def register_personal():
     db.session.add(new_user)
     db.session.commit()
 
-    # 📩 envio de email
-    try:
-        send_verification_email(
-            to_email=email,
-            name=name,
-            token=token
-        )
-    except Exception as e:
-        print(f"Erro ao enviar email: {e}")
+    # 📩 envio de email (DEBUG ATIVO)
+    result = send_verification_email(
+        to_email=email,
+        name=name,
+        token=token
+    )
+    print("EMAIL RESULT (PF):", result)
 
     return jsonify({
         "msg":  "Conta pessoal criada com sucesso",
