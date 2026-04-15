@@ -6,7 +6,7 @@ test_bp = Blueprint("test", __name__)
 @test_bp.route("/test-email", methods=["GET"])
 def test_email():
     ok = send_verification_email(
-        to_email="SEU_EMAIL_REAL_AQUI",
+        to_email="salvatiniguilherme@gmail.com",
         name="Guilherme",
         token="teste123"
     )
