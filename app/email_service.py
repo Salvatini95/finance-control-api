@@ -3,7 +3,7 @@ import os
 
 # 🔐 API KEY
 resend.api_key = os.environ.get("RESEND_API_KEY")
-
+print("API KEY:", resend.api_key)
 # ✅ FORÇA EMAIL DE TESTE (IMPORTANTE PRO RESEND FUNCIONAR)
 FROM_EMAIL = "onboarding@resend.dev"
 
