@@ -1,3 +1,5 @@
+print("🚀 DEV ROUTES ATIVO")
+
 from flask import Blueprint, jsonify
 from app.email_service import send_verification_email
 
