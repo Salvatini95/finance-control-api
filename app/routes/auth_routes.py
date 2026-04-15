@@ -2,13 +2,20 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from app.extensions import db
 from app.models import User, Company
-from datetime import date
-
-# 🔽 NOVOS IMPORTS
+from app.email_service import send_verification_email, send_password_reset_email
+from datetime import date, datetime, timedelta
 import secrets
-from app.email_service import send_verification_email
 
 auth_bp = Blueprint("auth", __name__)
+
+DEV_MODE = True  # ✅ True = só envia para seu email. False = envia para qualquer email
+
+
+def _get_to_email(real_email):
+    """Em DEV_MODE força envio para o email do dev."""
+    if DEV_MODE:
+        return "salvatiniguilherme@gmail.com"
+    return real_email
 
 
 # =========================
@@ -36,8 +43,7 @@ def register():
     if User.query.filter_by(email=email).first():
         return jsonify({"msg": "Este email já está cadastrado"}), 409
 
-    # 🔐 gera token
-    token = secrets.token_urlsafe(32)
+    verification_token = secrets.token_urlsafe(32)
 
     new_company = Company(
         name       = company_name,
@@ -49,28 +55,30 @@ def register():
     db.session.flush()
 
     new_user = User(
-        email        = email,
-        name         = name,
-        role         = "admin",
-        account_type = "business",
-        company_id   = new_company.id,
-        active       = True,
+        email                    = email,
+        name                     = name,
+        role                     = "admin",
+        account_type             = "business",
+        company_id               = new_company.id,
+        active                   = True,
+        email_verified           = False,
+        email_verification_token = verification_token,
     )
     new_user.set_password(password)
-
     db.session.add(new_user)
     db.session.commit()
 
-    # 📩 envio de email (DEBUG ATIVO)
-    result = send_verification_email(
-        to_email="salvatiniguilherme@gmail.com",
-        name=name,
-        token=token
-    )
-    print("EMAIL RESULT (PJ):", result)
+    try:
+        send_verification_email(
+            to_email = _get_to_email(email),
+            name     = name,
+            token    = verification_token,
+        )
+    except Exception as e:
+        print(f"Erro ao enviar email de verificação (PJ): {e}")
 
     return jsonify({
-        "msg":          "Empresa e usuário criados com sucesso",
+        "msg":          "Empresa criada! Verifique seu email para ativar a conta.",
         "company_id":   new_company.id,
         "company_name": new_company.name,
         "plan":         new_company.plan,
@@ -99,34 +107,141 @@ def register_personal():
     if User.query.filter_by(email=email).first():
         return jsonify({"msg": "Este email já está cadastrado"}), 409
 
-    # 🔐 gera token
-    token = secrets.token_urlsafe(32)
+    verification_token = secrets.token_urlsafe(32)
 
     new_user = User(
-        email        = email,
-        name         = name,
-        role         = "admin",
-        account_type = "personal",
-        company_id   = None,
-        active       = True,
+        email                    = email,
+        name                     = name,
+        role                     = "admin",
+        account_type             = "personal",
+        company_id               = None,
+        active                   = True,
+        email_verified           = False,
+        email_verification_token = verification_token,
     )
     new_user.set_password(password)
-
     db.session.add(new_user)
     db.session.commit()
 
-    # 📩 envio de email (DEBUG ATIVO)
-    result = send_verification_email(
-        to_email="salvatiniguilherme@gmail.com",
-        name=name,
-        token=token
-    )
-    print("EMAIL RESULT (PF):", result)
+    try:
+        send_verification_email(
+            to_email = _get_to_email(email),
+            name     = name,
+            token    = verification_token,
+        )
+    except Exception as e:
+        print(f"Erro ao enviar email de verificação (PF): {e}")
 
     return jsonify({
-        "msg":  "Conta pessoal criada com sucesso",
+        "msg":  "Conta criada! Verifique seu email para ativar a conta.",
         "plan": "free",
     }), 201
+
+
+# =========================
+# VERIFICAR EMAIL
+# =========================
+@auth_bp.route("/verify-email", methods=["GET"])
+def verify_email():
+    token = request.args.get("token", "").strip()
+    if not token:
+        return jsonify({"msg": "Token inválido"}), 400
+
+    user = User.query.filter_by(email_verification_token=token).first()
+    if not user:
+        return jsonify({"msg": "Token inválido ou já utilizado"}), 404
+
+    user.email_verified           = True
+    user.email_verification_token = None
+    db.session.commit()
+
+    return jsonify({"msg": "Email verificado com sucesso! Você já pode fazer login."}), 200
+
+
+# =========================
+# REENVIAR VERIFICAÇÃO
+# =========================
+@auth_bp.route("/resend-verification", methods=["POST"])
+def resend_verification():
+    data  = request.get_json()
+    email = data.get("email", "").strip().lower()
+    if not email:
+        return jsonify({"msg": "Email é obrigatório"}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"msg": "Email não encontrado"}), 404
+    if user.email_verified:
+        return jsonify({"msg": "Email já verificado"}), 400
+
+    new_token                    = secrets.token_urlsafe(32)
+    user.email_verification_token = new_token
+    db.session.commit()
+
+    try:
+        send_verification_email(
+            to_email = _get_to_email(email),
+            name     = user.name or "Usuário",
+            token    = new_token,
+        )
+    except Exception as e:
+        print(f"Erro ao reenviar email: {e}")
+
+    return jsonify({"msg": "Email de verificação reenviado!"}), 200
+
+
+# =========================
+# ESQUECEU A SENHA
+# =========================
+@auth_bp.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    data  = request.get_json()
+    email = data.get("email", "").strip().lower()
+    if not email:
+        return jsonify({"msg": "Email é obrigatório"}), 400
+
+    user = User.query.filter_by(email=email).first()
+
+    # ✅ mesmo se não encontrar, retorna sucesso (segurança — não revela se email existe)
+    if user:
+        reset_token              = secrets.token_urlsafe(32)
+        user.reset_password_token = reset_token
+        db.session.commit()
+        try:
+            send_password_reset_email(
+                to_email = _get_to_email(email),
+                name     = user.name or "Usuário",
+                token    = reset_token,
+            )
+        except Exception as e:
+            print(f"Erro ao enviar email de reset: {e}")
+
+    return jsonify({"msg": "Se este email estiver cadastrado, você receberá as instruções em breve."}), 200
+
+
+# =========================
+# RESETAR SENHA
+# =========================
+@auth_bp.route("/reset-password", methods=["POST"])
+def reset_password():
+    data     = request.get_json()
+    token    = data.get("token", "").strip()
+    password = data.get("password", "").strip()
+
+    if not token or not password:
+        return jsonify({"msg": "Token e nova senha são obrigatórios"}), 400
+    if len(password) < 6:
+        return jsonify({"msg": "A senha deve ter no mínimo 6 caracteres"}), 400
+
+    user = User.query.filter_by(reset_password_token=token).first()
+    if not user:
+        return jsonify({"msg": "Token inválido ou já utilizado"}), 404
+
+    user.set_password(password)
+    user.reset_password_token = None
+    db.session.commit()
+
+    return jsonify({"msg": "Senha redefinida com sucesso! Faça login com a nova senha."}), 200
 
 
 # =========================
@@ -150,6 +265,14 @@ def login():
         return jsonify({"msg": "Email ou senha inválidos"}), 401
     if not user.active:
         return jsonify({"msg": "Usuário inativo. Contate o administrador."}), 403
+
+    # ✅ bloqueia login se email não verificado
+    if not user.email_verified:
+        return jsonify({
+            "msg":              "Email não verificado. Verifique sua caixa de entrada.",
+            "email_unverified": True,
+            "email":            email,
+        }), 403
 
     token = create_access_token(identity=str(user.id))
 
@@ -178,12 +301,13 @@ def me():
         return jsonify({"msg": "Usuário não encontrado"}), 404
 
     return jsonify({
-        "id":           user.id,
-        "name":         user.name,
-        "email":        user.email,
-        "role":         user.role,
-        "account_type": user.account_type,
-        "company_id":   user.company_id,
-        "company_name": user.company.name if user.company else "",
-        "plan":         user.company.plan if user.company else "free",
+        "id":             user.id,
+        "name":           user.name,
+        "email":          user.email,
+        "role":           user.role,
+        "account_type":   user.account_type,
+        "company_id":     user.company_id,
+        "company_name":   user.company.name if user.company else "",
+        "plan":           user.company.plan if user.company else "free",
+        "email_verified": user.email_verified,
     }), 200

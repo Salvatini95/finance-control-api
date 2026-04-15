@@ -2,6 +2,7 @@ from app.extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date
 
+
 class Company(db.Model):
     __tablename__ = "companies"
 
@@ -36,6 +37,11 @@ class User(db.Model):
     role         = db.Column(db.String(20),  nullable=False, default="admin")
     account_type = db.Column(db.String(20),  nullable=False, default="business")
 
+    # ✅ NOVOS CAMPOS (EMAIL VERIFICATION)
+    email_verified           = db.Column(db.Boolean, default=False)
+    email_verification_token = db.Column(db.String(200), nullable=True)
+    reset_password_token     = db.Column(db.String(200), nullable=True)
+
     company_id = db.Column(
         db.Integer,
         db.ForeignKey("companies.id", name="fk_user_company"),
@@ -54,16 +60,20 @@ class User(db.Model):
         return check_password_hash(self.password, raw_password)
 
     @property
-    def is_admin(self): return self.role == "admin"
+    def is_admin(self):
+        return self.role == "admin"
 
     @property
-    def can_sell(self): return self.role in ["admin", "seller"]
+    def can_sell(self):
+        return self.role in ["admin", "seller"]
 
     @property
-    def can_finance(self): return self.role in ["admin", "financial"]
+    def can_finance(self):
+        return self.role in ["admin", "financial"]
 
     @property
-    def can_stock(self): return self.role in ["admin", "stock"]
+    def can_stock(self):
+        return self.role in ["admin", "stock"]
 
 
 class Transaction(db.Model):
@@ -104,7 +114,7 @@ class Product(db.Model):
 
     id             = db.Column(db.Integer,     primary_key=True)
     name           = db.Column(db.String(200), nullable=False)
-    sku = db.Column(db.String(100), nullable=True)
+    sku            = db.Column(db.String(100), nullable=True)
     description    = db.Column(db.String(500), nullable=True)
     type           = db.Column(db.String(20),  nullable=False, default="service")
     unit           = db.Column(db.String(50),  nullable=True)
@@ -124,15 +134,18 @@ class Product(db.Model):
     service_records = db.relationship("ServiceRecord", backref="product", lazy=True)
 
     @property
-    def profit(self): return self.price - self.cost
+    def profit(self):
+        return self.price - self.cost
 
     @property
     def margin(self):
-        if self.price == 0: return 0.0
+        if self.price == 0:
+            return 0.0
         return round((self.profit / self.price) * 100, 2)
 
     @property
-    def stock_alert(self): return self.type == "product" and self.stock_qty <= self.stock_min
+    def stock_alert(self):
+        return self.type == "product" and self.stock_qty <= self.stock_min
 
 
 class Quote(db.Model):
@@ -235,20 +248,18 @@ class ServiceRecord(db.Model):
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_svcrecord_user"),    nullable=False)
 
 
-# ✅ NOVO MODEL — METAS FINANCEIRAS
 class Goal(db.Model):
     __tablename__ = "goals"
 
     id          = db.Column(db.Integer,     primary_key=True)
     name        = db.Column(db.String(200), nullable=False)
     description = db.Column(db.String(500), nullable=True)
-    target      = db.Column(db.Float,       nullable=False)           # valor alvo
-    current     = db.Column(db.Float,       nullable=False, default=0.0)  # valor atual
+    target      = db.Column(db.Float,       nullable=False)
+    current     = db.Column(db.Float,       nullable=False, default=0.0)
     category    = db.Column(db.String(100), nullable=True)
     icon        = db.Column(db.String(10),  nullable=True, default="🎯")
-    deadline    = db.Column(db.String(20),  nullable=True)            # data limite
+    deadline    = db.Column(db.String(20),  nullable=True)
     status      = db.Column(db.String(20),  nullable=False, default="active")
-    # "active" | "completed" | "cancelled"
     created_at  = db.Column(db.String(20),  nullable=True)
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_goal_company"), nullable=True)
@@ -256,7 +267,8 @@ class Goal(db.Model):
 
     @property
     def progress(self):
-        if self.target == 0: return 0.0
+        if self.target == 0:
+            return 0.0
         return round(min((self.current / self.target) * 100, 100), 1)
 
     @property
