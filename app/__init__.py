@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS
 from app.extensions import db, jwt, migrate
+
+# 🔽 suas rotas existentes
 from app.routes.auth_routes import auth_bp
 from app.routes.transaction_routes import transaction_bp
 from app.routes.bill_routes import bill_bp
@@ -15,10 +17,14 @@ from app.routes.stock_routes import stock_bp
 from app.routes.company_routes import company_bp
 from app.routes.goal_routes import goal_bp
 
+# 🔽 NOVO (isolado)
+from app.routes.dev_routes import dev_bp
+
 load_dotenv()
 
 def create_app():
     app = Flask(__name__)
+
     app.config["SECRET_KEY"]                     = os.environ.get("SECRET_KEY")
     app.config["JWT_SECRET_KEY"]                 = os.environ.get("JWT_SECRET_KEY")
     app.config["SQLALCHEMY_DATABASE_URI"]        = os.environ.get("DATABASE_URL")
@@ -26,25 +32,27 @@ def create_app():
     app.config["MAX_CONTENT_LENGTH"]             = 4 * 1024 * 1024
     app.config["JWT_ACCESS_TOKEN_EXPIRES"]       = timedelta(hours=8)
 
-    CORS(app,
-         origins=[
-             "http://localhost:5173",
-             "http://localhost:5174",
-             "http://127.0.0.1:5173",
-             "https://finance-control-web-five.vercel.app",
-             "https://*.vercel.app",
-             "https://svfinance.com.br",
-             "https://www.svfinance.com.br",
-         ],
-         supports_credentials=True,
-         allow_headers=["Content-Type", "Authorization"],
-         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    CORS(
+        app,
+        origins=[
+            "http://localhost:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5173",
+            "https://finance-control-web-five.vercel.app",
+            "https://*.vercel.app",
+            "https://svfinance.com.br",
+            "https://www.svfinance.com.br",
+        ],
+        supports_credentials=True,
+        allow_headers=["Content-Type", "Authorization"],
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     )
 
     db.init_app(app)
     jwt.init_app(app)
     migrate.init_app(app, db)
 
+    # 🔽 ROTAS EXISTENTES (NÃO ALTERADAS)
     app.register_blueprint(auth_bp,        url_prefix="/api")
     app.register_blueprint(transaction_bp, url_prefix="/api")
     app.register_blueprint(bill_bp,        url_prefix="/api")
@@ -55,5 +63,8 @@ def create_app():
     app.register_blueprint(stock_bp,       url_prefix="/api")
     app.register_blueprint(company_bp,     url_prefix="/api")
     app.register_blueprint(goal_bp,        url_prefix="/api")
+
+    # 🔽 NOVA ROTA (ISOLADA - NÃO QUEBRA NADA)
+    app.register_blueprint(dev_bp)
 
     return app
