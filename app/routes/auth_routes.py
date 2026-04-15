@@ -63,7 +63,7 @@ def register():
 
     # 📩 envio de email (DEBUG ATIVO)
     result = send_verification_email(
-        to_email=email,
+        to_email="salvatiniguilherme@gmail.com",
         name=name,
         token=token
     )
@@ -117,7 +117,7 @@ def register_personal():
 
     # 📩 envio de email (DEBUG ATIVO)
     result = send_verification_email(
-        to_email=email,
+        to_email="salvatiniguilherme@gmail.com",
         name=name,
         token=token
     )
