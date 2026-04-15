@@ -1,21 +1,35 @@
 import resend
 import os
 
+# 🔐 API KEY
 resend.api_key = os.environ.get("RESEND_API_KEY")
 
-# ✅ enquanto domínio não verificado, usa o domínio de teste do Resend
-FROM_EMAIL = os.environ.get("FROM_EMAIL", "onboarding@resend.dev")
-APP_URL    = os.environ.get("APP_URL", "https://finance-control-web-five.vercel.app")
+# ✅ FORÇA EMAIL DE TESTE (IMPORTANTE PRO RESEND FUNCIONAR)
+FROM_EMAIL = "onboarding@resend.dev"
+
+# 🌐 FRONTEND URL
+APP_URL = os.environ.get(
+    "APP_URL",
+    "https://finance-control-web-five.vercel.app"
+)
 
 
+# =========================
+# EMAIL DE VERIFICAÇÃO
+# =========================
 def send_verification_email(to_email: str, name: str, token: str):
     verify_url = f"{APP_URL}/verify-email?token={token}"
+
+    print("📩 ENVIANDO EMAIL DE VERIFICAÇÃO")
+    print("TO:", to_email)
+    print("FROM:", FROM_EMAIL)
+
     try:
-        resend.Emails.send({
-            "from":    FROM_EMAIL,
-            "to":      [to_email],
+        response = resend.Emails.send({
+            "from": FROM_EMAIL,
+            "to": [to_email],
             "subject": "✅ Confirme seu email — SV Finance Control",
-            "html":    f"""
+            "html": f"""
             <div style="font-family:Inter,sans-serif;max-width:560px;margin:0 auto;background:#0f172a;color:#fff;border-radius:16px;overflow:hidden">
               <div style="background:linear-gradient(135deg,#6366f1,#4f46e5);padding:32px;text-align:center">
                 <h1 style="margin:0;font-size:24px;letter-spacing:2px">FINANCE CONTROL</h1>
@@ -29,7 +43,10 @@ def send_verification_email(to_email: str, name: str, token: str):
                     ✅ Confirmar Email
                   </a>
                 </div>
-                <p style="color:#64748b;font-size:12px;text-align:center">Este link expira em <strong style="color:#94a3b8">24 horas</strong>.<br>Se não criou uma conta, ignore este email.</p>
+                <p style="color:#64748b;font-size:12px;text-align:center">
+                  Este link expira em <strong style="color:#94a3b8">24 horas</strong>.<br>
+                  Se não criou uma conta, ignore este email.
+                </p>
                 <div style="background:#1e293b;border-radius:8px;padding:12px 16px;margin-top:20px">
                   <p style="color:#64748b;font-size:11px;margin:0">Ou copie e cole este link no navegador:</p>
                   <p style="color:#6366f1;font-size:11px;margin:4px 0 0;word-break:break-all">{verify_url}</p>
@@ -41,20 +58,33 @@ def send_verification_email(to_email: str, name: str, token: str):
             </div>
             """,
         })
+
+        print("✅ RESEND RESPONSE:", response)
         return True
+
     except Exception as e:
-        print(f"Erro ao enviar email de verificação: {e}")
+        import traceback
+        print("❌ ERRO COMPLETO EMAIL:")
+        traceback.print_exc()
         return False
 
 
+# =========================
+# RESET DE SENHA
+# =========================
 def send_password_reset_email(to_email: str, name: str, token: str):
     reset_url = f"{APP_URL}/reset-password?token={token}"
+
+    print("📩 ENVIANDO EMAIL DE RESET")
+    print("TO:", to_email)
+    print("FROM:", FROM_EMAIL)
+
     try:
-        resend.Emails.send({
-            "from":    FROM_EMAIL,
-            "to":      [to_email],
+        response = resend.Emails.send({
+            "from": FROM_EMAIL,
+            "to": [to_email],
             "subject": "🔑 Redefinir senha — SV Finance Control",
-            "html":    f"""
+            "html": f"""
             <div style="font-family:Inter,sans-serif;max-width:560px;margin:0 auto;background:#0f172a;color:#fff;border-radius:16px;overflow:hidden">
               <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:32px;text-align:center">
                 <h1 style="margin:0;font-size:24px;letter-spacing:2px">FINANCE CONTROL</h1>
@@ -62,17 +92,16 @@ def send_password_reset_email(to_email: str, name: str, token: str):
               </div>
               <div style="padding:32px">
                 <h2 style="color:#fff;margin:0 0 12px">Olá, {name}! 🔑</h2>
-                <p style="color:#94a3b8;line-height:1.6">Recebemos uma solicitação para redefinir a senha da sua conta. Clique no botão abaixo para criar uma nova senha.</p>
+                <p style="color:#94a3b8;line-height:1.6">Recebemos uma solicitação para redefinir a senha da sua conta.</p>
                 <div style="text-align:center;margin:32px 0">
                   <a href="{reset_url}" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;padding:14px 32px;border-radius:50px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block">
                     🔑 Redefinir Senha
                   </a>
                 </div>
-                <p style="color:#64748b;font-size:12px;text-align:center">Este link expira em <strong style="color:#94a3b8">1 hora</strong>.<br>Se não solicitou a redefinição, ignore este email.</p>
-                <div style="background:#1e293b;border-radius:8px;padding:12px 16px;margin-top:20px">
-                  <p style="color:#64748b;font-size:11px;margin:0">Ou copie e cole este link no navegador:</p>
-                  <p style="color:#f59e0b;font-size:11px;margin:4px 0 0;word-break:break-all">{reset_url}</p>
-                </div>
+                <p style="color:#64748b;font-size:12px;text-align:center">
+                  Este link expira em <strong style="color:#94a3b8">1 hora</strong>.<br>
+                  Se não solicitou, ignore este email.
+                </p>
               </div>
               <div style="padding:20px 32px;border-top:1px solid #1e293b;text-align:center">
                 <p style="color:#475569;font-size:12px;margin:0">SV Finance Control · svfinance.com.br</p>
@@ -80,7 +109,12 @@ def send_password_reset_email(to_email: str, name: str, token: str):
             </div>
             """,
         })
+
+        print("✅ RESEND RESPONSE:", response)
         return True
+
     except Exception as e:
-        print(f"Erro ao enviar email de reset: {e}")
+        import traceback
+        print("❌ ERRO COMPLETO RESET:")
+        traceback.print_exc()
         return False
