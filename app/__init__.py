@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS
 from app.extensions import db, jwt, migrate
-
 # 🔽 suas rotas existentes
 from app.routes.auth_routes import auth_bp
 from app.routes.transaction_routes import transaction_bp
@@ -16,7 +15,7 @@ from app.routes.order_routes import order_bp
 from app.routes.stock_routes import stock_bp
 from app.routes.company_routes import company_bp
 from app.routes.goal_routes import goal_bp
-
+from app.routes.import_export_routes import import_export_bp
 # 🔽 NOVO (isolado)
 from app.routes.dev_routes import dev_bp
 
@@ -24,17 +23,15 @@ load_dotenv()
 
 def create_app():
     app = Flask(__name__)
-    
+
     print("🔥 APP INICIALIZADO")
-    
+
     app.config["SECRET_KEY"]                     = os.environ.get("SECRET_KEY")
     app.config["JWT_SECRET_KEY"]                 = os.environ.get("JWT_SECRET_KEY")
     app.config["SQLALCHEMY_DATABASE_URI"]        = os.environ.get("DATABASE_URL")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["MAX_CONTENT_LENGTH"]             = 4 * 1024 * 1024
     app.config["JWT_ACCESS_TOKEN_EXPIRES"]       = timedelta(hours=8)
-
-    
 
     CORS(
         app,
@@ -57,17 +54,17 @@ def create_app():
     migrate.init_app(app, db)
 
     # 🔽 ROTAS EXISTENTES (NÃO ALTERADAS)
-    app.register_blueprint(auth_bp,        url_prefix="/api")
-    app.register_blueprint(transaction_bp, url_prefix="/api")
-    app.register_blueprint(bill_bp,        url_prefix="/api")
-    app.register_blueprint(product_bp,     url_prefix="/api")
-    app.register_blueprint(quote_bp,       url_prefix="/api")
-    app.register_blueprint(client_bp,      url_prefix="/api")
-    app.register_blueprint(order_bp,       url_prefix="/api")
-    app.register_blueprint(stock_bp,       url_prefix="/api")
-    app.register_blueprint(company_bp,     url_prefix="/api")
-    app.register_blueprint(goal_bp,        url_prefix="/api")
-
+    app.register_blueprint(auth_bp,           url_prefix="/api")
+    app.register_blueprint(transaction_bp,    url_prefix="/api")
+    app.register_blueprint(bill_bp,           url_prefix="/api")
+    app.register_blueprint(product_bp,        url_prefix="/api")
+    app.register_blueprint(quote_bp,          url_prefix="/api")
+    app.register_blueprint(client_bp,         url_prefix="/api")
+    app.register_blueprint(order_bp,          url_prefix="/api")
+    app.register_blueprint(stock_bp,          url_prefix="/api")
+    app.register_blueprint(company_bp,        url_prefix="/api")
+    app.register_blueprint(goal_bp,           url_prefix="/api")
+    app.register_blueprint(import_export_bp,  url_prefix="/api/import-export")
     # 🔽 NOVA ROTA (ISOLADA - NÃO QUEBRA NADA)
     app.register_blueprint(dev_bp)
 
