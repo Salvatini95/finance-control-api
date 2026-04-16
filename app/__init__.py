@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS
 from app.extensions import db, jwt, migrate
-# 🔽 suas rotas existentes
 from app.routes.auth_routes import auth_bp
 from app.routes.transaction_routes import transaction_bp
 from app.routes.bill_routes import bill_bp
@@ -16,7 +15,7 @@ from app.routes.stock_routes import stock_bp
 from app.routes.company_routes import company_bp
 from app.routes.goal_routes import goal_bp
 from app.routes.import_export_routes import import_export_bp
-# 🔽 NOVO (isolado)
+from app.routes.import_routes import import_bp
 from app.routes.dev_routes import dev_bp
 
 load_dotenv()
@@ -53,7 +52,6 @@ def create_app():
     jwt.init_app(app)
     migrate.init_app(app, db)
 
-    # 🔽 ROTAS EXISTENTES (NÃO ALTERADAS)
     app.register_blueprint(auth_bp,           url_prefix="/api")
     app.register_blueprint(transaction_bp,    url_prefix="/api")
     app.register_blueprint(bill_bp,           url_prefix="/api")
@@ -65,7 +63,7 @@ def create_app():
     app.register_blueprint(company_bp,        url_prefix="/api")
     app.register_blueprint(goal_bp,           url_prefix="/api")
     app.register_blueprint(import_export_bp,  url_prefix="/api/import-export")
-    # 🔽 NOVA ROTA (ISOLADA - NÃO QUEBRA NADA)
+    app.register_blueprint(import_bp,         url_prefix="/api/import-export")
     app.register_blueprint(dev_bp)
 
     return app
