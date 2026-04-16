@@ -1,136 +1,192 @@
-# 💰 SV Finance Control — API
+# SV Finance Control — Backend
 
-Backend do sistema de gestão financeira empresarial desenvolvido com Flask e PostgreSQL.
-
-![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python)
-![Flask](https://img.shields.io/badge/Flask-3.x-black?logo=flask)
-![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-336791?logo=postgresql)
-![JWT](https://img.shields.io/badge/Auth-JWT-orange)
-![Supabase](https://img.shields.io/badge/Hosted-Supabase-3ECF8E?logo=supabase)
-
-> 🔗 Frontend: [finance-control-web](https://github.com/Salvatini95/finance-control-web)
+> API REST para o SaaS de controle financeiro SV Finance Control.  
+> Desenvolvido com Flask + SQLAlchemy + PostgreSQL, hospedado no Railway.
 
 ---
 
-## ✨ Funcionalidades
+## 🚀 Stack
 
-- 🔐 Autenticação JWT com expiração de 8h
-- 🏢 Multi-tenant — registro cria Company e User admin simultaneamente
-- 👥 Gestão de usuários por empresa com roles
-- 📊 Transações com origem (manual, venda, conta)
-- 📄 Contas a pagar e receber
-- 🧾 Orçamentos com fluxo completo de status
-- 🛒 Vendas com conclusão automática: lança transação, baixa estoque e registra serviços
-- 📦 Produtos e serviços com controle de estoque e estoque inicial automático
-- 👤 Clientes com histórico
-- 📈 Analytics financeiro
+- **Python 3.13** + Flask
+- **SQLAlchemy** + Flask-Migrate — ORM e migrações
+- **Flask-JWT-Extended** — autenticação com JWT
+- **psycopg2** — driver PostgreSQL
+- **Resend** — envio de emails transacionais
+- **Gunicorn** — servidor WSGI em produção
+- **Railway** — deploy automático via GitHub
+- **Supabase** — PostgreSQL hospedado (região São Paulo)
 
 ---
 
-## 🛠️ Stack
+## 🌐 URLs
 
-| Tecnologia | Uso |
-|---|---|
-| Python + Flask | API REST |
-| SQLAlchemy | ORM |
-| Flask-Migrate | Migrações de banco |
-| Flask-JWT-Extended | Autenticação com token |
-| Flask-CORS | Liberação de origens |
-| Werkzeug | Hash seguro de senhas |
-| PostgreSQL via Supabase | Banco de dados |
+| Ambiente | URL                                                       |
+|----------|-----------------------------------------------------------|
+| Produção | https://finance-control-api-production.up.railway.app/api |
+| Banco    | Supabase PostgreSQL — região São Paulo                    |
 
 ---
 
-## 📁 Estrutura
+## 📁 Estrutura do Projeto
 ```
 controle_financeiro/
-├── .env
-├── run.py
-└── app/
-├── init.py
-├── extensions.py
-├── models.py
-└── routes/
-├── auth_routes.py
-├── company_routes.py
-├── transaction_routes.py
-├── bill_routes.py
-├── product_routes.py
-├── client_routes.py
-├── order_routes.py
-├── quote_routes.py
-└── stock_routes.py
+├── app/
+│   ├── init.py           # Factory pattern + registro de blueprints
+│   ├── extensions.py         # db, jwt, migrate
+│   ├── models.py             # Todos os models SQLAlchemy
+│   ├── email_service.py      # Integração Resend (verificação + reset)
+│   └── routes/
+│       ├── auth_routes.py        # Login, cadastro, verificação, reset senha
+│       ├── transaction_routes.py # CRUD transações
+│       ├── bill_routes.py        # CRUD contas a pagar/receber
+│       ├── product_routes.py     # CRUD produtos + SKU + estoque inicial
+│       ├── quote_routes.py       # CRUD orçamentos
+│       ├── order_routes.py       # CRUD vendas (PED/OS automático)
+│       ├── stock_routes.py       # Movimentações de estoque
+│       ├── client_routes.py      # CRUD clientes
+│       ├── goal_routes.py        # CRUD metas financeiras
+│       └── company_routes.py     # Dados da empresa + equipe
+├── migrations/               # Flask-Migrate (Alembic)
+│   └── versions/
+├── .env                      # Variáveis de ambiente (não commitar)
+├── requirements.txt
+├── Procfile                  # Comando de start no Railway
+└── wsgi.py
 ```
 ---
 
-## 🚀 Como rodar localmente
+## 🗄️ Models Principais
 
-### Pré-requisitos
-- Python 3.10+
-- PostgreSQL ou conta no Supabase
+| Model         | Descrição                                      |
+|---------------|------------------------------------------------|
+| Company       | Empresa (multi-tenant)                         |
+| User          | Usuário com roles e verificação de email       |
+| Transaction   | Receitas e despesas                            |
+| Bill          | Contas a pagar e a receber                     |
+| Product       | Produtos e serviços com SKU e estoque          |
+| Quote         | Orçamentos com itens em JSON                   |
+| Order         | Vendas (PED/OS) com baixa automática de estoque|
+| StockMovement | Histórico de movimentações de estoque          |
+| ServiceRecord | Registro de serviços prestados                 |
+| Goal          | Metas financeiras (conta pessoal)              |
 
-### Instalação
-git clone https://github.com/Salvatini95/controle_financeiro.git
-cd controle_financeiro
+---
+
+## 🔐 Autenticação
+
+- JWT com expiração de **8 horas**
+- Verificação de email obrigatória no cadastro
+- Recuperação de senha via link temporário
+- Emails enviados via **Resend**
+
+---
+
+## ⚙️ Variáveis de Ambiente
+
+```env
+SECRET_KEY=sua_secret_key
+JWT_SECRET_KEY=sua_jwt_secret_key
+DATABASE_URL=postgresql://user:password@host:port/database
+RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxx
+FROM_EMAIL=onboarding@resend.dev
+APP_URL=https://finance-control-web-five.vercel.app
+```
+
+---
+
+## 🛠️ Rodando Localmente
+
+```bash
+# Criar e ativar ambiente virtual
 python -m venv .venv
-Windows
-.venv\Scripts\activate
+.venv\Scripts\activate  # Windows
+source .venv/bin/activate  # Linux/Mac
+
+# Instalar dependências
 pip install -r requirements.txt
 
-### Configuração
+# Rodar servidor
+flask run --host=0.0.0.0 --port=5000
+```
 
-Crie um arquivo .env na raiz:
-DATABASE_URL=postgresql://usuario:senha@host:5432/postgres
-JWT_SECRET_KEY=sua_chave_jwt_secreta
-SECRET_KEY=sua_chave_secreta
+---
 
-### Execução
+## 🗃️ Migrações
+
+```bash
+# Criar nova migração
+flask db migrate -m "descrição"
+
+# ⚠️ IMPORTANTE: verificar colunas NOT NULL sem server_default antes de aplicar
+
+# Aplicar migração
 flask db upgrade
-python run.py
+```
 
-API disponível em: http://127.0.0.1:5000
-
----
-
-## 🔌 Principais Endpoints
-
-| Método | Rota | Descrição | Auth |
-|---|---|---|---|
-| POST | /api/register | Cria empresa e admin | ❌ |
-| POST | /api/login | Login | ❌ |
-| GET | /api/transactions | Listar transações | ✅ |
-| POST | /api/transactions | Criar transação | ✅ |
-| GET | /api/quotes | Listar orçamentos | ✅ |
-| POST | /api/orders/from-quote/id | Criar venda de orçamento | ✅ |
-| POST | /api/orders/id/complete | Concluir venda | ✅ |
-| GET | /api/products | Listar produtos | ✅ |
-| GET | /api/company/users | Listar usuários da empresa | ✅ Admin |
-| POST | /api/company/users | Criar usuário na empresa | ✅ Admin |
+> **Atenção:** Flask-Migrate gera migrações com `NOT NULL` sem `server_default`.  
+> Sempre verifique e corrija manualmente antes de rodar `flask db upgrade`.
 
 ---
 
-## 🔒 Segurança
+## 🚀 Deploy (Railway)
 
-- Senhas com hash via Werkzeug
-- Rotas protegidas com JWT
-- Token com expiração de 8h
-- Isolamento total de dados por company_id
-- CORS configurado por origem
+**Start Command:**
+flask db upgrade && gunicorn "app:create_app()" --bind 0.0.0.0:$PORT
 
----
-
-## 🗺️ Próximos passos
-
-- [ ] Dashboard por role com dados filtrados por usuário
-- [ ] Analytics por vendedor
-- [ ] Sistema de planos (Free, Pro, Business)
-- [ ] Deploy em produção (Railway)
+O deploy é automático via **GitHub + Railway**.  
+Qualquer push na branch `main` dispara um novo deploy com migração automática.
 
 ---
 
-## 👨‍💻 Autor
+## 📡 Principais Endpoints
 
-Desenvolvido por **Guilherme Salvatini**
+### Auth
+| Método | Rota                    | Descrição                    |
+|--------|-------------------------|------------------------------|
+| POST   | /api/register           | Cadastro empresarial (PJ)    |
+| POST   | /api/register/personal  | Cadastro pessoal (PF)        |
+| POST   | /api/login              | Login com JWT                |
+| GET    | /api/verify-email       | Verificar email              |
+| POST   | /api/forgot-password    | Solicitar reset de senha     |
+| POST   | /api/reset-password     | Redefinir senha              |
+| GET    | /api/me                 | Perfil do usuário logado     |
 
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-blue?logo=linkedin)](https://www.linkedin.com/in/guilherme-salvatini-623326361/)
-[![GitHub](https://img.shields.io/badge/GitHub-black?logo=github)](https://github.com/Salvatini95)
+### Financeiro
+| Método        | Rota                          | Descrição               |
+|---------------|-------------------------------|-------------------------|
+| GET/POST      | /api/transactions             | Transações              |
+| GET/POST      | /api/bills                    | Contas                  |
+| GET/POST      | /api/goals                    | Metas financeiras       |
+| PATCH         | /api/goals/:id/deposit        | Depositar na meta       |
+
+### Empresa
+| Método        | Rota                          | Descrição               |
+|---------------|-------------------------------|-------------------------|
+| GET/POST      | /api/products                 | Produtos e serviços     |
+| GET/POST      | /api/clients                  | Clientes                |
+| GET/POST      | /api/quotes                   | Orçamentos              |
+| GET/POST      | /api/orders                   | Vendas                  |
+| POST          | /api/orders/:id/complete      | Concluir venda          |
+| POST          | /api/orders/from-quote/:id    | Venda a partir de ORC   |
+| GET/POST      | /api/stock/:id/movements      | Movimentações estoque   |
+
+---
+
+## 📦 Funcionalidades Principais
+
+- ✅ Multi-tenant com isolamento por `company_id`
+- ✅ Roles: admin, financial, stock, seller, viewer
+- ✅ Verificação de email + reset de senha (Resend)
+- ✅ Prefixo automático PED vs OS nas vendas
+- ✅ Baixa automática de estoque ao concluir venda
+- ✅ Custo médio ponderado no estoque
+- ✅ Registro automático de serviços prestados
+- ✅ Metas financeiras com depósito e auto-conclusão
+- ✅ Migrações versionadas com Alembic
+
+---
+
+## 👨‍💻 Desenvolvido por
+
+**Guilherme Salvatini**  
+[github.com/Salvatini95](https://github.com/Salvatini95)
