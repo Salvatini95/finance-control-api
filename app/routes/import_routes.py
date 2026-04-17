@@ -92,17 +92,22 @@ def _next_order_number(user, prefix='PED'):
 
 
 def _find_or_create_client(client_name, user):
-    """Encontra cliente pelo nome ou cria um novo."""
-    if not client_name or client_name.strip() == '':
-        return None
+    """
+    Encontra cliente pelo nome ou cria um novo.
+    Se não houver nome, busca/cria cliente genérico 'Cliente Importado'
+    para não violar o NOT NULL do client_id na Order.
+    """
+    name = (client_name or '').strip() or 'Cliente Importado'
+
     existing = Client.query.filter_by(
         company_id=user.company_id,
-        name=client_name.strip()
+        name=name
     ).first()
     if existing:
         return existing
+
     new_client = Client(
-        name       = client_name.strip(),
+        name       = name,
         company_id = user.company_id,
         user_id    = user.id,
         created_at = datetime.today().strftime('%Y-%m-%d'),
@@ -246,15 +251,16 @@ def import_transactions(rows, mapping, user):
 
             # ── Se for venda → cria Order vinculada ───────
             if is_sale:
-                client_name    = resolve(row, 'client',       mapping, ALIASES['client'])
-                item_name      = resolve(row, 'item_name',    mapping, ALIASES['item_name'])  or description
-                item_qty       = safe_float(resolve(row, 'item_qty',   mapping, ALIASES['item_qty']),  1.0)
-                item_price     = safe_float(resolve(row, 'item_price', mapping, ALIASES['item_price']), amount)
+                client_name      = resolve(row, 'client',       mapping, ALIASES['client'])
+                item_name        = resolve(row, 'item_name',    mapping, ALIASES['item_name'])  or description
+                item_qty         = safe_float(resolve(row, 'item_qty',   mapping, ALIASES['item_qty']),  1.0)
+                item_price       = safe_float(resolve(row, 'item_price', mapping, ALIASES['item_price']), amount)
                 order_number_csv = resolve(row, 'order_number', mapping, ALIASES['order_number'])
 
-                # Encontra ou cria cliente
-                client_obj = _find_or_create_client(client_name, user)
-                client_id  = client_obj.id if client_obj else None
+                # Sempre retorna um cliente válido (cria 'Cliente Importado' se necessário)
+                client_obj      = _find_or_create_client(client_name, user)
+                client_id       = client_obj.id
+                sem_cliente     = not client_name or client_name.strip() == ''
 
                 # Monta item único da order
                 item_total = item_qty * item_price
@@ -304,13 +310,13 @@ def import_transactions(rows, mapping, user):
 
                 orders_created += 1
 
-                # Notifica se não tem cliente
-                if not client_id:
+                # Notifica se não tinha cliente no CSV (usou 'Cliente Importado')
+                if sem_cliente:
                     orders_no_client.append({
                         'row':          i,
                         'order_number': order_num,
                         'description':  description,
-                        'message':      'Venda criada sem cliente — preencha manualmente em Vendas',
+                        'message':      'Venda criada com cliente "Cliente Importado" — vincule o cliente correto em Vendas',
                     })
 
         except Exception as e:
