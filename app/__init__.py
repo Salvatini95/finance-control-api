@@ -16,6 +16,7 @@ from app.routes.company_routes import company_bp
 from app.routes.goal_routes import goal_bp
 from app.routes.import_export_routes import import_export_bp
 from app.routes.import_routes import import_bp
+from app.routes.dre_routes import dre_bp
 from app.routes.dev_routes import dev_bp
 
 load_dotenv()
@@ -64,6 +65,7 @@ def create_app():
     app.register_blueprint(goal_bp,           url_prefix="/api")
     app.register_blueprint(import_export_bp,  url_prefix="/api/import-export")
     app.register_blueprint(import_bp,         url_prefix="/api/import-export")
+    app.register_blueprint(dre_bp,            url_prefix="/api")
     app.register_blueprint(dev_bp)
 
     return app
