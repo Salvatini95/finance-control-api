@@ -1,9 +1,10 @@
 import csv
 import io
+import json
 from datetime import datetime
 from flask import Blueprint, request, jsonify, abort
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import db, User, Transaction, Bill, Client, Product, StockMovement
+from app.models import db, User, Transaction, Bill, Client, Product, StockMovement, Order
 from functools import wraps
 
 import_bp = Blueprint('import', __name__)
@@ -71,14 +72,56 @@ def parse_csv_or_xlsx(file):
 
 def resolve(row, field, mapping, aliases):
     """Resolve valor de um campo via mapping explícito ou alias automático."""
-    # 1. Mapeamento manual
     if field in mapping and mapping[field] in row:
         return str(row[mapping[field]]).strip()
-    # 2. Alias automático
     for alias in aliases:
         if alias in row:
             return str(row[alias]).strip()
     return ''
+
+
+def _next_order_number(user, prefix='PED'):
+    """Gera número sequencial por prefixo e ano."""
+    year = datetime.today().year
+    if user.company_id:
+        all_orders = Order.query.filter_by(company_id=user.company_id).all()
+    else:
+        all_orders = Order.query.filter_by(user_id=user.id).all()
+    count = sum(1 for o in all_orders if o.number.startswith(f'{prefix}-{year}')) + 1
+    return f'{prefix}-{year}-{count:03d}'
+
+
+def _find_or_create_client(client_name, user):
+    """Encontra cliente pelo nome ou cria um novo."""
+    if not client_name or client_name.strip() == '':
+        return None
+    existing = Client.query.filter_by(
+        company_id=user.company_id,
+        name=client_name.strip()
+    ).first()
+    if existing:
+        return existing
+    new_client = Client(
+        name       = client_name.strip(),
+        company_id = user.company_id,
+        user_id    = user.id,
+        created_at = datetime.today().strftime('%Y-%m-%d'),
+    )
+    db.session.add(new_client)
+    db.session.flush()
+    return new_client
+
+
+def _is_sale_source(raw_source, raw_type):
+    """Detecta se a linha representa uma venda."""
+    source_lower = raw_source.lower()
+    return source_lower in (
+        'sale', 'venda', 'vendas', 'pedido', 'ped', 'os',
+        'ordem de servico', 'ordem de serviço', 'order'
+    ) or (
+        raw_type in ('income', 'receita') and
+        source_lower in ('sale', 'venda', 'vendas')
+    )
 
 
 # ─────────────────────────────────────────────
@@ -93,7 +136,6 @@ def import_module(module):
     if 'file' not in request.files:
         return jsonify({'error': 'Nenhum arquivo enviado'}), 400
 
-    import json
     mapping_raw = request.form.get('mapping', '{}')
     try:
         mapping = json.loads(mapping_raw)
@@ -124,15 +166,15 @@ def import_module(module):
 
 # ─────────────────────────────────────────────
 # TRANSAÇÕES
-# Campos do model: description, amount, type,
-#                  category, date, source,
-#                  company_id, user_id
+# Detecta automaticamente se é venda e cria Order
 # ─────────────────────────────────────────────
 
 def import_transactions(rows, mapping, user):
-    imported = 0
-    skipped  = 0
-    errors   = []
+    imported          = 0
+    skipped           = 0
+    orders_created    = 0
+    errors            = []
+    orders_no_client  = []  # ordens criadas sem cliente identificado
 
     ALIASES = {
         'type':        ['Tipo', 'tipo', 'Natureza', 'natureza'],
@@ -140,11 +182,20 @@ def import_transactions(rows, mapping, user):
         'amount':      ['Valor', 'valor', 'Amount', 'Valor Lançamento'],
         'category':    ['Categoria', 'categoria', 'Category', 'Plano de Contas'],
         'date':        ['Data', 'data', 'Date', 'Competência', 'competencia', 'Data Lançamento'],
+        'source':      ['Origem', 'origem', 'Source', 'Fonte', 'Tipo Lançamento'],
+        # campos opcionais para compor a order
+        'client':      ['Cliente', 'cliente', 'Client', 'Razão Social', 'Sacado'],
+        'item_name':   ['Produto', 'produto', 'Item', 'item', 'Serviço', 'servico', 'Descrição do Item'],
+        'item_qty':    ['Quantidade', 'quantidade', 'Qtd', 'qtd', 'Qty'],
+        'item_price':  ['Preço Unitário', 'preco_unitario', 'Unit Price', 'Preço Unit', 'Vlr Unit'],
+        'order_number':['Número Pedido', 'numero_pedido', 'N. Pedido', 'Order Number', 'Nº OS', 'Nº Pedido'],
     }
+
+    today = datetime.today().strftime('%Y-%m-%d')
 
     for i, row in enumerate(rows, start=2):
         try:
-            # Tipo
+            # ── Tipo ──────────────────────────────────────
             raw_type = resolve(row, 'type', mapping, ALIASES['type']).lower()
             if raw_type in ('receita', 'entrada', 'recebimento', 'income', 'c', 'crédito', 'credito'):
                 t_type = 'income'
@@ -155,14 +206,14 @@ def import_transactions(rows, mapping, user):
                 skipped += 1
                 continue
 
-            # Descrição (obrigatório)
+            # ── Descrição (obrigatório) ───────────────────
             description = resolve(row, 'description', mapping, ALIASES['description'])
             if not description:
                 errors.append({'row': i, 'field': 'Descrição', 'message': 'Descrição obrigatória'})
                 skipped += 1
                 continue
 
-            # Valor (obrigatório)
+            # ── Valor (obrigatório) ───────────────────────
             raw_amount = resolve(row, 'amount', mapping, ALIASES['amount'])
             amount     = safe_float(raw_amount)
             if amount <= 0:
@@ -171,8 +222,14 @@ def import_transactions(rows, mapping, user):
                 continue
 
             category = resolve(row, 'category', mapping, ALIASES['category']) or 'Importado'
-            date_str = safe_date_str(resolve(row, 'date', mapping, ALIASES['date'])) or datetime.today().strftime('%Y-%m-%d')
+            date_str = safe_date_str(resolve(row, 'date', mapping, ALIASES['date'])) or today
 
+            # ── Detecta se é venda ────────────────────────
+            raw_source     = resolve(row, 'source', mapping, ALIASES['source'])
+            is_sale        = t_type == 'income' and _is_sale_source(raw_source, t_type)
+            source_final   = 'sale' if is_sale else ('import' if not raw_source else raw_source.lower()[:20])
+
+            # ── Cria a Transação ──────────────────────────
             t = Transaction(
                 company_id  = user.company_id,
                 user_id     = user.id,
@@ -181,23 +238,107 @@ def import_transactions(rows, mapping, user):
                 amount      = amount,
                 category    = category,
                 date        = date_str,
-                source      = 'import',
+                source      = source_final,
             )
             db.session.add(t)
+            db.session.flush()  # gera t.id antes de criar a Order
             imported += 1
+
+            # ── Se for venda → cria Order vinculada ───────
+            if is_sale:
+                client_name    = resolve(row, 'client',       mapping, ALIASES['client'])
+                item_name      = resolve(row, 'item_name',    mapping, ALIASES['item_name'])  or description
+                item_qty       = safe_float(resolve(row, 'item_qty',   mapping, ALIASES['item_qty']),  1.0)
+                item_price     = safe_float(resolve(row, 'item_price', mapping, ALIASES['item_price']), amount)
+                order_number_csv = resolve(row, 'order_number', mapping, ALIASES['order_number'])
+
+                # Encontra ou cria cliente
+                client_obj = _find_or_create_client(client_name, user)
+                client_id  = client_obj.id if client_obj else None
+
+                # Monta item único da order
+                item_total = item_qty * item_price
+                items_list = [{
+                    'name':       item_name,
+                    'unit':       'un',
+                    'qty':        item_qty,
+                    'price':      item_price,
+                    'total':      item_total,
+                    'product_id': None,
+                }]
+
+                # Define prefixo (OS se vier "OS" na descrição ou Origem, PED caso contrário)
+                desc_lower = description.lower()
+                src_lower  = raw_source.lower()
+                if 'os-' in desc_lower or 'os ' in desc_lower or src_lower in ('os','ordem de servico','ordem de serviço'):
+                    prefix = 'OS'
+                else:
+                    prefix = 'PED'
+
+                # Usa número do CSV se existir, senão gera
+                order_num = order_number_csv if order_number_csv else _next_order_number(user, prefix)
+
+                order = Order(
+                    number         = order_num,
+                    status         = 'done',
+                    origin         = 'import',
+                    notes          = f'Importado via CSV — {date_str}',
+                    payment_terms  = '',
+                    discount       = 0.0,
+                    items_json     = json.dumps(items_list),
+                    subtotal       = amount,
+                    total          = amount,
+                    created_at     = date_str,
+                    finished_at    = date_str,
+                    client_id      = client_id,
+                    quote_id       = None,
+                    transaction_id = t.id,
+                    user_id        = user.id,
+                    company_id     = user.company_id,
+                )
+                db.session.add(order)
+                db.session.flush()
+
+                # Vincula transaction → order (para o link clicável funcionar)
+                # transaction_id já está na order; order_id vai no lookup do GET /transactions
+
+                orders_created += 1
+
+                # Notifica se não tem cliente
+                if not client_id:
+                    orders_no_client.append({
+                        'row':          i,
+                        'order_number': order_num,
+                        'description':  description,
+                        'message':      'Venda criada sem cliente — preencha manualmente em Vendas',
+                    })
 
         except Exception as e:
             errors.append({'row': i, 'field': '—', 'message': str(e)})
             skipped += 1
 
-    return {'imported': imported, 'skipped': skipped, 'updated': 0, 'errors': errors, 'duplicates_notified': []}
+    # Monta info final
+    info = ''
+    if orders_created > 0:
+        info = (
+            f'{orders_created} venda(s) criada(s) automaticamente. '
+            'Clique no número do pedido em Transações para visualizar.'
+        )
+
+    return {
+        'imported':            imported,
+        'skipped':             skipped,
+        'updated':             0,
+        'errors':              errors,
+        'duplicates_notified': [],
+        'orders_created':      orders_created,
+        'orders_no_client':    orders_no_client,
+        'info':                info,
+    }
 
 
 # ─────────────────────────────────────────────
 # CONTAS (BILLS)
-# Campos do model: description, amount, type,
-#                  status, due_date, category,
-#                  notes, company_id, user_id
 # ─────────────────────────────────────────────
 
 def import_bills(rows, mapping, user):
@@ -217,7 +358,6 @@ def import_bills(rows, mapping, user):
 
     for i, row in enumerate(rows, start=2):
         try:
-            # Tipo
             raw_type = resolve(row, 'type', mapping, ALIASES['type']).lower()
             if raw_type in ('pagar', 'despesa', 'saída', 'saida', 'payable', 'a pagar'):
                 b_type = 'payable'
@@ -228,14 +368,12 @@ def import_bills(rows, mapping, user):
                 skipped += 1
                 continue
 
-            # Descrição (obrigatório)
             description = resolve(row, 'description', mapping, ALIASES['description'])
             if not description:
                 errors.append({'row': i, 'field': 'Descrição', 'message': 'Descrição obrigatória'})
                 skipped += 1
                 continue
 
-            # Valor (obrigatório)
             raw_amount = resolve(row, 'amount', mapping, ALIASES['amount'])
             amount     = safe_float(raw_amount)
             if amount <= 0:
@@ -243,7 +381,6 @@ def import_bills(rows, mapping, user):
                 skipped += 1
                 continue
 
-            # Vencimento (obrigatório)
             raw_date = resolve(row, 'due_date', mapping, ALIASES['due_date'])
             due_date = safe_date_str(raw_date)
             if not due_date:
@@ -278,10 +415,6 @@ def import_bills(rows, mapping, user):
 
 # ─────────────────────────────────────────────
 # CLIENTES
-# Campos do model: name, email, phone,
-#                  document, address, notes,
-#                  created_at, company_id, user_id
-# ⚠️ NÃO TEM: city, state
 # ─────────────────────────────────────────────
 
 def import_clients(rows, mapping, user):
@@ -314,10 +447,7 @@ def import_clients(rows, mapping, user):
             address  = resolve(row, 'address',  mapping, ALIASES['address'])  or None
             notes    = resolve(row, 'notes',    mapping, ALIASES['notes'])    or None
 
-            # Verifica duplicata por nome exato
-            existing = Client.query.filter_by(
-                company_id=user.company_id, name=name
-            ).first()
+            existing = Client.query.filter_by(company_id=user.company_id, name=name).first()
 
             if existing:
                 has_conflict = (
@@ -331,7 +461,6 @@ def import_clients(rows, mapping, user):
                         'message': 'Nome já existe com email/documento/telefone diferente',
                         'row':     i,
                     })
-                # Atualiza campos não vazios
                 if email:    existing.email    = email
                 if phone:    existing.phone    = phone
                 if document: existing.document = document
@@ -369,13 +498,6 @@ def import_clients(rows, mapping, user):
 
 # ─────────────────────────────────────────────
 # PRODUTOS
-# Campos do model: name, sku, description,
-#                  type, unit, cost, price,
-#                  category, active,
-#                  stock_qty, stock_min,
-#                  company_id, user_id
-# StockMovement: type, qty, reason, date,
-#                company_id, product_id, user_id
 # ─────────────────────────────────────────────
 
 def import_products(rows, mapping, user):
@@ -418,7 +540,6 @@ def import_products(rows, mapping, user):
             unit        = resolve(row, 'unit',        mapping, ALIASES['unit'])        or 'un'
             description = resolve(row, 'description', mapping, ALIASES['description']) or None
 
-            # Normaliza tipo
             if p_type in ('produto', 'product', 'prod'):
                 p_type = 'product'
             elif p_type in ('serviço', 'servico', 'service', 'svc'):
@@ -426,7 +547,6 @@ def import_products(rows, mapping, user):
             else:
                 p_type = 'product'
 
-            # Verifica duplicata por SKU ou nome
             existing = None
             if sku:
                 existing = Product.query.filter_by(company_id=user.company_id, sku=sku).first()
@@ -455,7 +575,6 @@ def import_products(rows, mapping, user):
                 if category:    existing.category    = category
                 updated += 1
 
-                # StockMovement de ajuste se estoque mudou
                 if stock_qty > 0:
                     mv = StockMovement(
                         company_id = user.company_id,
@@ -484,9 +603,8 @@ def import_products(rows, mapping, user):
                     active      = True,
                 )
                 db.session.add(p)
-                db.session.flush()  # gera p.id antes do StockMovement
+                db.session.flush()
 
-                # StockMovement de entrada inicial
                 if stock_qty > 0:
                     mv = StockMovement(
                         company_id = user.company_id,
@@ -516,11 +634,6 @@ def import_products(rows, mapping, user):
 
 # ─────────────────────────────────────────────
 # EQUIPE (somente admin)
-# Campos do model: name, email, role,
-#                  account_type, active,
-#                  company_id
-# ⚠️ Criado sem senha — membro usa
-#    "Esqueci minha senha" para ativar acesso
 # ─────────────────────────────────────────────
 
 def import_team(rows, mapping, user):
@@ -565,7 +678,8 @@ def import_team(rows, mapping, user):
             raw_active = resolve(row, 'active', mapping, ALIASES['active']).lower()
             active = raw_active not in ('não', 'nao', 'false', '0', 'inativo')
 
-            existing = User.query.filter_by(email=email).first()
+            from app.models import User as UserModel
+            existing = UserModel.query.filter_by(email=email).first()
 
             if existing:
                 if existing.company_id and existing.company_id != user.company_id:
@@ -586,7 +700,7 @@ def import_team(rows, mapping, user):
                 import secrets
                 temp_password = secrets.token_hex(16)
 
-                new_user = User(
+                new_user = UserModel(
                     name           = name,
                     email          = email,
                     role           = role,
