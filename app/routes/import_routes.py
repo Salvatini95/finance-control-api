@@ -1,6 +1,6 @@
 import csv
 import io
-from datetime import datetime, date
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import db, User, Transaction, Bill, Client, Product, StockMovement
@@ -19,20 +19,21 @@ def safe_float(val, default=0.0):
         return default
 
 
-def safe_date(val):
+def safe_date_str(val):
+    """Converte qualquer formato de data para string yyyy-mm-dd."""
     if not val:
         return None
     val = str(val).strip()
     for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y'):
         try:
-            return datetime.strptime(val, fmt).date()
+            return datetime.strptime(val, fmt).strftime('%Y-%m-%d')
         except Exception:
             continue
     return None
 
 
 def parse_csv_or_xlsx(file):
-    """Lê arquivo CSV ou XLSX e retorna lista de dicts."""
+    """Lê arquivo CSV ou XLSX e retorna (headers, rows)."""
     fname = file.filename or ''
     if fname.endswith('.xlsx') or fname.endswith('.xls'):
         try:
@@ -57,25 +58,25 @@ def parse_csv_or_xlsx(file):
         return headers, data
 
 
+def resolve(row, field, mapping, aliases):
+    """Resolve valor de um campo via mapping explícito ou alias automático."""
+    # 1. Mapeamento manual
+    if field in mapping and mapping[field] in row:
+        return str(row[mapping[field]]).strip()
+    # 2. Alias automático
+    for alias in aliases:
+        if alias in row:
+            return str(row[alias]).strip()
+    return ''
+
+
 # ─────────────────────────────────────────────
-# ROTA PRINCIPAL DE IMPORTAÇÃO
+# ROTA PRINCIPAL
 # ─────────────────────────────────────────────
 
 @import_bp.route('/import/<module>', methods=['POST'])
 @jwt_required()
 def import_module(module):
-    """
-    Recebe:
-      - file: arquivo CSV ou XLSX
-      - mapping: JSON com { campo_sistema: coluna_arquivo } ex: {"description": "Histórico"}
-
-    Retorna:
-      - imported: int
-      - skipped: int
-      - updated: int
-      - errors: list de { row, field, message }
-      - duplicates_notified: list de registros que foram atualizados
-    """
     user = get_current_user()
 
     if 'file' not in request.files:
@@ -88,8 +89,8 @@ def import_module(module):
     except Exception:
         mapping = {}
 
-    file             = request.files['file']
-    headers, rows    = parse_csv_or_xlsx(file)
+    file          = request.files['file']
+    headers, rows = parse_csv_or_xlsx(file)
 
     if not rows:
         return jsonify({'error': 'Arquivo vazio ou inválido'}), 400
@@ -102,30 +103,18 @@ def import_module(module):
     }
 
     if module not in handlers:
-        return jsonify({'error': f'Módulo "{module}" não suporta importação ainda'}), 400
+        return jsonify({'error': f'Módulo "{module}" não suporta importação'}), 400
 
     result = handlers[module](rows, mapping, user)
     db.session.commit()
     return jsonify(result)
 
 
-def resolve(row, field, mapping, aliases):
-    """
-    Resolve valor de um campo.
-    Prioridade: mapping explícito → alias automático → campo direto.
-    """
-    # 1. Mapeamento manual explícito
-    if field in mapping and mapping[field] in row:
-        return str(row[mapping[field]]).strip()
-    # 2. Alias automático por nome de coluna
-    for alias in aliases:
-        if alias in row:
-            return str(row[alias]).strip()
-    return ''
-
-
 # ─────────────────────────────────────────────
-# IMPORTAR TRANSAÇÕES
+# TRANSAÇÕES
+# Campos do model: description, amount, type,
+#                  category, date, source,
+#                  company_id, user_id
 # ─────────────────────────────────────────────
 
 def import_transactions(rows, mapping, user):
@@ -134,33 +123,34 @@ def import_transactions(rows, mapping, user):
     errors   = []
 
     ALIASES = {
-        'type':        ['Tipo', 'tipo', 'Type', 'Natureza', 'natureza'],
+        'type':        ['Tipo', 'tipo', 'Natureza', 'natureza'],
         'description': ['Descrição', 'descricao', 'Histórico', 'historico', 'Description', 'Memo'],
-        'amount':      ['Valor', 'valor', 'Amount', 'Valor Lançamento', 'Vlr Lançamento'],
+        'amount':      ['Valor', 'valor', 'Amount', 'Valor Lançamento'],
         'category':    ['Categoria', 'categoria', 'Category', 'Plano de Contas'],
         'date':        ['Data', 'data', 'Date', 'Competência', 'competencia', 'Data Lançamento'],
-        'status':      ['Status', 'status', 'Situação'],
-        'notes':       ['Observações', 'observacoes', 'Obs', 'Memo', 'Complemento'],
     }
 
     for i, row in enumerate(rows, start=2):
         try:
+            # Tipo
             raw_type = resolve(row, 'type', mapping, ALIASES['type']).lower()
             if raw_type in ('receita', 'entrada', 'recebimento', 'income', 'c', 'crédito', 'credito'):
                 t_type = 'income'
             elif raw_type in ('despesa', 'saída', 'saida', 'pagamento', 'expense', 'd', 'débito', 'debito'):
                 t_type = 'expense'
             else:
-                errors.append({'row': i, 'field': 'Tipo', 'message': f'Valor "{raw_type}" não reconhecido. Use: receita/despesa'})
+                errors.append({'row': i, 'field': 'Tipo', 'message': f'Valor "{raw_type}" não reconhecido. Use: receita ou despesa'})
                 skipped += 1
                 continue
 
+            # Descrição (obrigatório)
             description = resolve(row, 'description', mapping, ALIASES['description'])
             if not description:
                 errors.append({'row': i, 'field': 'Descrição', 'message': 'Descrição obrigatória'})
                 skipped += 1
                 continue
 
+            # Valor (obrigatório)
             raw_amount = resolve(row, 'amount', mapping, ALIASES['amount'])
             amount     = safe_float(raw_amount)
             if amount <= 0:
@@ -168,22 +158,17 @@ def import_transactions(rows, mapping, user):
                 skipped += 1
                 continue
 
-            raw_date = resolve(row, 'date', mapping, ALIASES['date'])
-            t_date   = safe_date(raw_date) or date.today()
-
             category = resolve(row, 'category', mapping, ALIASES['category']) or 'Importado'
-            status   = resolve(row, 'status',   mapping, ALIASES['status'])   or 'confirmado'
-            notes    = resolve(row, 'notes',    mapping, ALIASES['notes'])
+            date_str = safe_date_str(resolve(row, 'date', mapping, ALIASES['date'])) or datetime.today().strftime('%Y-%m-%d')
 
             t = Transaction(
                 company_id  = user.company_id,
+                user_id     = user.id,
                 type        = t_type,
                 description = description,
                 amount      = amount,
                 category    = category,
-                date        = t_date,
-                status      = status,
-                notes       = notes,
+                date        = date_str,
                 source      = 'import',
             )
             db.session.add(t)
@@ -197,7 +182,10 @@ def import_transactions(rows, mapping, user):
 
 
 # ─────────────────────────────────────────────
-# IMPORTAR CONTAS (BILLS)
+# CONTAS (BILLS)
+# Campos do model: description, amount, type,
+#                  status, due_date, category,
+#                  notes, company_id, user_id
 # ─────────────────────────────────────────────
 
 def import_bills(rows, mapping, user):
@@ -209,30 +197,33 @@ def import_bills(rows, mapping, user):
         'type':        ['Tipo', 'tipo', 'Natureza'],
         'description': ['Descrição', 'descricao', 'Histórico', 'historico'],
         'amount':      ['Valor', 'valor', 'Amount'],
-        'category':    ['Categoria', 'categoria'],
         'due_date':    ['Vencimento', 'vencimento', 'Data Vencimento', 'Due Date'],
+        'category':    ['Categoria', 'categoria'],
         'status':      ['Status', 'status', 'Situação'],
         'notes':       ['Observações', 'observacoes', 'Obs'],
     }
 
     for i, row in enumerate(rows, start=2):
         try:
+            # Tipo
             raw_type = resolve(row, 'type', mapping, ALIASES['type']).lower()
-            if raw_type in ('pagar', 'despesa', 'saída', 'saida', 'payable'):
+            if raw_type in ('pagar', 'despesa', 'saída', 'saida', 'payable', 'a pagar'):
                 b_type = 'payable'
-            elif raw_type in ('receber', 'receita', 'entrada', 'receivable'):
+            elif raw_type in ('receber', 'receita', 'entrada', 'receivable', 'a receber'):
                 b_type = 'receivable'
             else:
-                errors.append({'row': i, 'field': 'Tipo', 'message': f'Valor "{raw_type}" não reconhecido. Use: pagar/receber'})
+                errors.append({'row': i, 'field': 'Tipo', 'message': f'Valor "{raw_type}" não reconhecido. Use: pagar ou receber'})
                 skipped += 1
                 continue
 
+            # Descrição (obrigatório)
             description = resolve(row, 'description', mapping, ALIASES['description'])
             if not description:
                 errors.append({'row': i, 'field': 'Descrição', 'message': 'Descrição obrigatória'})
                 skipped += 1
                 continue
 
+            # Valor (obrigatório)
             raw_amount = resolve(row, 'amount', mapping, ALIASES['amount'])
             amount     = safe_float(raw_amount)
             if amount <= 0:
@@ -240,8 +231,9 @@ def import_bills(rows, mapping, user):
                 skipped += 1
                 continue
 
+            # Vencimento (obrigatório)
             raw_date = resolve(row, 'due_date', mapping, ALIASES['due_date'])
-            due_date = safe_date(raw_date)
+            due_date = safe_date_str(raw_date)
             if not due_date:
                 errors.append({'row': i, 'field': 'Vencimento', 'message': f'Data "{raw_date}" inválida. Use dd/mm/aaaa'})
                 skipped += 1
@@ -249,10 +241,11 @@ def import_bills(rows, mapping, user):
 
             category = resolve(row, 'category', mapping, ALIASES['category']) or 'Importado'
             status   = resolve(row, 'status',   mapping, ALIASES['status'])   or 'pending'
-            notes    = resolve(row, 'notes',    mapping, ALIASES['notes'])
+            notes    = resolve(row, 'notes',    mapping, ALIASES['notes'])    or None
 
             b = Bill(
                 company_id  = user.company_id,
+                user_id     = user.id,
                 type        = b_type,
                 description = description,
                 amount      = amount,
@@ -272,7 +265,11 @@ def import_bills(rows, mapping, user):
 
 
 # ─────────────────────────────────────────────
-# IMPORTAR CLIENTES
+# CLIENTES
+# Campos do model: name, email, phone,
+#                  document, address, notes,
+#                  created_at, company_id, user_id
+# ⚠️ NÃO TEM: city, state
 # ─────────────────────────────────────────────
 
 def import_clients(rows, mapping, user):
@@ -285,12 +282,10 @@ def import_clients(rows, mapping, user):
     ALIASES = {
         'name':     ['Nome', 'nome', 'Name', 'Cliente', 'Razão Social'],
         'email':    ['Email', 'email', 'E-mail'],
-        'phone':    ['Telefone', 'telefone', 'Phone', 'Celular', 'Fone'],
+        'phone':    ['Telefone', 'telefone', 'Phone', 'Celular'],
         'document': ['Documento', 'documento', 'CPF', 'CNPJ', 'CPF/CNPJ'],
         'address':  ['Endereço', 'endereco', 'Address', 'Logradouro'],
-        'city':     ['Cidade', 'cidade', 'City'],
-        'state':    ['Estado', 'estado', 'UF', 'State'],
-        'notes':    ['Observações', 'observacoes', 'Obs'],
+        'notes':    ['Observações', 'observacoes', 'Obs', 'Nota'],
     }
 
     for i, row in enumerate(rows, start=2):
@@ -301,13 +296,11 @@ def import_clients(rows, mapping, user):
                 skipped += 1
                 continue
 
-            email    = resolve(row, 'email',    mapping, ALIASES['email'])
-            phone    = resolve(row, 'phone',    mapping, ALIASES['phone'])
-            document = resolve(row, 'document', mapping, ALIASES['document'])
-            address  = resolve(row, 'address',  mapping, ALIASES['address'])
-            city     = resolve(row, 'city',     mapping, ALIASES['city'])
-            state    = resolve(row, 'state',    mapping, ALIASES['state'])
-            notes    = resolve(row, 'notes',    mapping, ALIASES['notes'])
+            email    = resolve(row, 'email',    mapping, ALIASES['email'])    or None
+            phone    = resolve(row, 'phone',    mapping, ALIASES['phone'])    or None
+            document = resolve(row, 'document', mapping, ALIASES['document']) or None
+            address  = resolve(row, 'address',  mapping, ALIASES['address'])  or None
+            notes    = resolve(row, 'notes',    mapping, ALIASES['notes'])    or None
 
             # Verifica duplicata por nome exato
             existing = Client.query.filter_by(
@@ -315,7 +308,6 @@ def import_clients(rows, mapping, user):
             ).first()
 
             if existing:
-                # Verifica se outros campos diferem
                 has_conflict = (
                     (email    and existing.email    and existing.email    != email)    or
                     (document and existing.document and existing.document != document) or
@@ -324,7 +316,7 @@ def import_clients(rows, mapping, user):
                 if has_conflict:
                     duplicates.append({
                         'name':    name,
-                        'message': f'Nome já existe com dados distintos (email/documento/telefone diferente)',
+                        'message': 'Nome já existe com email/documento/telefone diferente',
                         'row':     i,
                     })
                 # Atualiza campos não vazios
@@ -332,21 +324,20 @@ def import_clients(rows, mapping, user):
                 if phone:    existing.phone    = phone
                 if document: existing.document = document
                 if address:  existing.address  = address
-                if city:     existing.city     = city
-                if state:    existing.state    = state
                 if notes:    existing.notes    = notes
                 updated += 1
             else:
+                today = datetime.today().strftime('%Y-%m-%d')
                 c = Client(
                     company_id = user.company_id,
+                    user_id    = user.id,
                     name       = name,
-                    email      = email   or None,
-                    phone      = phone   or None,
-                    document   = document or None,
-                    address    = address  or None,
-                    city       = city     or None,
-                    state      = state    or None,
-                    notes      = notes    or None,
+                    email      = email,
+                    phone      = phone,
+                    document   = document,
+                    address    = address,
+                    notes      = notes,
+                    created_at = today,
                 )
                 db.session.add(c)
                 imported += 1
@@ -356,16 +347,23 @@ def import_clients(rows, mapping, user):
             skipped += 1
 
     return {
-        'imported':             imported,
-        'skipped':              skipped,
-        'updated':              updated,
-        'errors':               errors,
-        'duplicates_notified':  duplicates,
+        'imported':            imported,
+        'skipped':             skipped,
+        'updated':             updated,
+        'errors':              errors,
+        'duplicates_notified': duplicates,
     }
 
 
 # ─────────────────────────────────────────────
-# IMPORTAR PRODUTOS
+# PRODUTOS
+# Campos do model: name, sku, description,
+#                  type, unit, cost, price,
+#                  category, active,
+#                  stock_qty, stock_min,
+#                  company_id, user_id
+# StockMovement: type, qty, reason, date,
+#                company_id, product_id, user_id
 # ─────────────────────────────────────────────
 
 def import_products(rows, mapping, user):
@@ -376,17 +374,19 @@ def import_products(rows, mapping, user):
     duplicates = []
 
     ALIASES = {
-        'name':      ['Nome', 'nome', 'Name', 'Produto', 'Descrição'],
-        'sku':       ['SKU', 'sku', 'Código', 'Cod', 'Ref', 'Referência'],
-        'type':      ['Tipo', 'tipo', 'Type'],
-        'category':  ['Categoria', 'categoria', 'Category'],
-        'price':     ['Preço de Venda', 'preco_venda', 'Preço', 'Price', 'Valor Venda'],
-        'cost':      ['Custo', 'custo', 'Cost', 'Valor Custo'],
-        'stock_qty': ['Estoque', 'estoque', 'Stock', 'Qtd', 'Quantidade'],
-        'stock_min': ['Estoque Mínimo', 'estoque_min', 'Min Stock', 'Qtd Mínima'],
-        'unit':      ['Unidade', 'unidade', 'Unit', 'Un'],
+        'name':        ['Nome', 'nome', 'Produto', 'Name'],
+        'sku':         ['SKU', 'sku', 'Código', 'Cod', 'Referência', 'Ref'],
+        'type':        ['Tipo', 'tipo', 'Type'],
+        'category':    ['Categoria', 'categoria', 'Category'],
+        'price':       ['Preço de Venda', 'preco_venda', 'Preço', 'Price', 'Valor Venda'],
+        'cost':        ['Custo', 'custo', 'Cost', 'Valor Custo'],
+        'stock_qty':   ['Estoque', 'estoque', 'Stock', 'Qtd', 'Quantidade'],
+        'stock_min':   ['Estoque Mínimo', 'estoque_min', 'Min Stock', 'Qtd Mínima'],
+        'unit':        ['Unidade', 'unidade', 'Unit', 'Un'],
         'description': ['Descrição', 'descricao', 'Description', 'Obs'],
     }
+
+    today = datetime.today().strftime('%Y-%m-%d')
 
     for i, row in enumerate(rows, start=2):
         try:
@@ -397,16 +397,24 @@ def import_products(rows, mapping, user):
                 continue
 
             sku         = resolve(row, 'sku',         mapping, ALIASES['sku'])         or None
-            p_type      = resolve(row, 'type',        mapping, ALIASES['type'])        or 'produto'
+            p_type      = resolve(row, 'type',        mapping, ALIASES['type']).lower() or 'produto'
             category    = resolve(row, 'category',    mapping, ALIASES['category'])    or 'Importado'
-            price       = safe_float(resolve(row, 'price',     mapping, ALIASES['price']))
-            cost        = safe_float(resolve(row, 'cost',      mapping, ALIASES['cost']))
-            stock_qty   = int(safe_float(resolve(row, 'stock_qty', mapping, ALIASES['stock_qty'])))
-            stock_min   = int(safe_float(resolve(row, 'stock_min', mapping, ALIASES['stock_min'])))
+            price       = safe_float(resolve(row, 'price',       mapping, ALIASES['price']))
+            cost        = safe_float(resolve(row, 'cost',        mapping, ALIASES['cost']))
+            stock_qty   = safe_float(resolve(row, 'stock_qty',   mapping, ALIASES['stock_qty']))
+            stock_min   = safe_float(resolve(row, 'stock_min',   mapping, ALIASES['stock_min']))
             unit        = resolve(row, 'unit',        mapping, ALIASES['unit'])        or 'un'
             description = resolve(row, 'description', mapping, ALIASES['description']) or None
 
-            # Verifica duplicata por SKU (se tiver) ou nome
+            # Normaliza tipo
+            if p_type in ('produto', 'product', 'prod'):
+                p_type = 'product'
+            elif p_type in ('serviço', 'servico', 'service', 'svc'):
+                p_type = 'service'
+            else:
+                p_type = 'product'
+
+            # Verifica duplicata por SKU ou nome
             existing = None
             if sku:
                 existing = Product.query.filter_by(company_id=user.company_id, sku=sku).first()
@@ -435,22 +443,25 @@ def import_products(rows, mapping, user):
                 if category:    existing.category    = category
                 updated += 1
 
-                # Registra movimentação de estoque se mudou
-                if stock_qty and stock_qty != (existing.stock_qty or 0):
+                # StockMovement de ajuste se estoque mudou
+                if stock_qty > 0:
                     mv = StockMovement(
-                        company_id  = user.company_id,
-                        product_id  = existing.id,
-                        type        = 'ajuste',
-                        quantity    = stock_qty,
-                        notes       = 'Ajuste via importação CSV',
+                        company_id = user.company_id,
+                        product_id = existing.id,
+                        user_id    = user.id,
+                        type       = 'ajuste',
+                        qty        = stock_qty,
+                        reason     = 'Ajuste via importação CSV',
+                        date       = today,
                     )
                     db.session.add(mv)
             else:
                 p = Product(
                     company_id  = user.company_id,
+                    user_id     = user.id,
                     name        = name,
                     sku         = sku,
-                    type        = p_type.lower(),
+                    type        = p_type,
                     category    = category,
                     price       = price,
                     cost        = cost,
@@ -461,18 +472,19 @@ def import_products(rows, mapping, user):
                     active      = True,
                 )
                 db.session.add(p)
+                db.session.flush()  # gera p.id antes do StockMovement
 
-                # StockMovement inicial
+                # StockMovement de entrada inicial
                 if stock_qty > 0:
                     mv = StockMovement(
                         company_id = user.company_id,
-                        product_id = None,  # será preenchido após flush
+                        product_id = p.id,
+                        user_id    = user.id,
                         type       = 'entrada',
-                        quantity   = stock_qty,
-                        notes      = 'Estoque inicial via importação CSV',
+                        qty        = stock_qty,
+                        reason     = 'Estoque inicial via importação CSV',
+                        date       = today,
                     )
-                    db.session.flush()
-                    mv.product_id = p.id
                     db.session.add(mv)
 
                 imported += 1
