@@ -1,15 +1,26 @@
 import csv
 import io
 from datetime import datetime
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, abort
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import db, User, Transaction, Bill, Client, Product, StockMovement
+from functools import wraps
 
 import_bp = Blueprint('import', __name__)
 
 
 def get_current_user():
     return User.query.get(get_jwt_identity())
+
+
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        user = get_current_user()
+        if not user or user.role != 'admin':
+            abort(403)
+        return fn(*args, **kwargs)
+    return wrapper
 
 
 def safe_float(val, default=0.0):
@@ -100,6 +111,7 @@ def import_module(module):
         'bills':        import_bills,
         'clients':      import_clients,
         'products':     import_products,
+        'team':         import_team,
     }
 
     if module not in handlers:
@@ -499,4 +511,107 @@ def import_products(rows, mapping, user):
         'updated':             updated,
         'errors':              errors,
         'duplicates_notified': duplicates,
+    }
+
+
+# ─────────────────────────────────────────────
+# EQUIPE (somente admin)
+# Campos do model: name, email, role,
+#                  account_type, active,
+#                  company_id
+# ⚠️ Criado sem senha — membro usa
+#    "Esqueci minha senha" para ativar acesso
+# ─────────────────────────────────────────────
+
+def import_team(rows, mapping, user):
+    if user.role != 'admin':
+        return {'error': 'Apenas admins podem importar membros da equipe'}
+
+    imported   = 0
+    skipped    = 0
+    updated    = 0
+    errors     = []
+    duplicates = []
+
+    ROLES_VALID = ['admin', 'financial', 'stock', 'seller', 'viewer']
+
+    ALIASES = {
+        'name':  ['Nome', 'nome', 'Name'],
+        'email': ['Email', 'email', 'E-mail'],
+        'role':  ['Role', 'role', 'Função', 'Perfil', 'Cargo'],
+        'active':['Ativo', 'ativo', 'Active', 'Status'],
+    }
+
+    for i, row in enumerate(rows, start=2):
+        try:
+            name = resolve(row, 'name', mapping, ALIASES['name'])
+            if not name:
+                errors.append({'row': i, 'field': 'Nome', 'message': 'Nome obrigatório'})
+                skipped += 1
+                continue
+
+            email = resolve(row, 'email', mapping, ALIASES['email'])
+            if not email:
+                errors.append({'row': i, 'field': 'Email', 'message': 'Email obrigatório'})
+                skipped += 1
+                continue
+
+            role = resolve(row, 'role', mapping, ALIASES['role']).lower() or 'viewer'
+            if role not in ROLES_VALID:
+                errors.append({'row': i, 'field': 'Role', 'message': f'Role "{role}" inválido. Use: {", ".join(ROLES_VALID)}'})
+                skipped += 1
+                continue
+
+            raw_active = resolve(row, 'active', mapping, ALIASES['active']).lower()
+            active = raw_active not in ('não', 'nao', 'false', '0', 'inativo')
+
+            existing = User.query.filter_by(email=email).first()
+
+            if existing:
+                if existing.company_id and existing.company_id != user.company_id:
+                    duplicates.append({
+                        'name':    name,
+                        'message': f'Email {email} já pertence a outra empresa',
+                        'row':     i,
+                    })
+                    skipped += 1
+                    continue
+
+                existing.name       = name
+                existing.role       = role
+                existing.active     = active
+                existing.company_id = user.company_id
+                updated += 1
+            else:
+                import secrets
+                temp_password = secrets.token_hex(16)
+
+                new_user = User(
+                    name           = name,
+                    email          = email,
+                    role           = role,
+                    active         = active,
+                    account_type   = 'business',
+                    company_id     = user.company_id,
+                    email_verified = False,
+                )
+                new_user.set_password(temp_password)
+                db.session.add(new_user)
+                imported += 1
+
+        except Exception as e:
+            errors.append({'row': i, 'field': '—', 'message': str(e)})
+            skipped += 1
+
+    info = ''
+    if imported > 0:
+        info = 'Membros importados precisam usar "Esqueci minha senha" para definir sua senha e acessar o sistema.'
+
+    return {
+        'imported':            imported,
+        'skipped':             skipped,
+        'updated':             updated,
+        'errors':              errors,
+        'duplicates_notified': duplicates,
+        'info':                info,
     }

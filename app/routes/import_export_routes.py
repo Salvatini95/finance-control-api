@@ -4,6 +4,17 @@ from datetime import datetime
 from flask import Blueprint, request, Response, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import db, User, Transaction, Bill, Client, Product, Quote, Order
+from functools import wraps
+from flask import abort
+
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        user = get_current_user()
+        if not user or user.role != 'admin':
+            abort(403)
+        return fn(*args, **kwargs)
+    return wrapper
 
 import_export_bp = Blueprint('import_export', __name__)
 
@@ -189,7 +200,7 @@ def export_clients():
     if date_to:
         q = q.filter(Client.created_at <= date_to)
 
-    headers = ['ID', 'Nome', 'Email', 'Telefone', 'Documento', 'Endereço', 'Cidade', 'Estado', 'Criado em', 'Observações']
+    headers = ['ID', 'Nome', 'Email', 'Telefone', 'Documento', 'Endereço', 'Criado em', 'Observações']
     rows = []
     for c in q.order_by(Client.name).all():
         rows.append({
@@ -199,9 +210,7 @@ def export_clients():
             'Telefone':    safe(c, 'phone'),
             'Documento':   safe(c, 'document'),
             'Endereço':    safe(c, 'address'),
-            'Cidade':      safe(c, 'city'),
-            'Estado':      safe(c, 'state'),
-            'Criado em':   fmt_date(safe(c, 'created_at', None)),
+            'Criado em':   safe(c, 'created_at'),
             'Observações': safe(c, 'notes'),
         })
 
@@ -325,10 +334,9 @@ TEMPLATES = {
                     'Categoria': 'Aluguel', 'Vencimento': '10/01/2025', 'Status': 'pendente', 'Observações': ''},
     },
     'clients': {
-        'headers': ['Nome', 'Email', 'Telefone', 'Documento', 'Endereço', 'Cidade', 'Estado', 'Observações'],
+        'headers': ['Nome', 'Email', 'Telefone', 'Documento', 'Endereço', 'Observações'],
         'example': {'Nome': 'João da Silva', 'Email': 'joao@email.com', 'Telefone': '(44) 99999-0000',
-                    'Documento': '123.456.789-00', 'Endereço': 'Rua das Flores, 100',
-                    'Cidade': 'Maringá', 'Estado': 'PR', 'Observações': ''},
+                    'Documento': '123.456.789-00', 'Endereço': 'Rua das Flores, 100', 'Observações': ''},
     },
     'products': {
         'headers': ['Nome', 'SKU', 'Tipo', 'Categoria', 'Preço de Venda', 'Custo',
@@ -336,6 +344,11 @@ TEMPLATES = {
         'example': {'Nome': 'Produto Exemplo', 'SKU': 'PROD-001', 'Tipo': 'produto',
                     'Categoria': 'Geral', 'Preço de Venda': '50.00', 'Custo': '25.00',
                     'Estoque': '10', 'Estoque Mínimo': '2', 'Unidade': 'un', 'Descrição': ''},
+    },
+    'team': {
+        'headers': ['Nome', 'Email', 'Role', 'Ativo'],
+        'example': {'Nome': 'Maria Souza', 'Email': 'maria@empresa.com',
+                    'Role': 'seller', 'Ativo': 'Sim'},
     },
 }
 
@@ -359,6 +372,36 @@ def download_template(module):
             'Access-Control-Expose-Headers': 'Content-Disposition',
         }
     )
+
+
+# ─────────────────────────────────────────────
+# EXPORTAR EQUIPE (somente admin)
+# ─────────────────────────────────────────────
+
+@import_export_bp.route('/export/team', methods=['GET'])
+@jwt_required()
+@admin_required
+def export_team():
+    user = get_current_user()
+    fmt  = request.args.get('format', 'csv')
+
+    members = User.query.filter_by(company_id=user.company_id).all()
+
+    headers = ['ID', 'Nome', 'Email', 'Role', 'Tipo de Conta', 'Email Verificado', 'Ativo']
+    rows = []
+    for m in members:
+        rows.append({
+            'ID':               safe(m, 'id'),
+            'Nome':             safe(m, 'name'),
+            'Email':            safe(m, 'email'),
+            'Role':             safe(m, 'role'),
+            'Tipo de Conta':    safe(m, 'account_type'),
+            'Email Verificado': 'Sim' if safe(m, 'email_verified', False) else 'Não',
+            'Ativo':            'Sim' if safe(m, 'active', True) else 'Não',
+        })
+
+    stamp = datetime.now().strftime('%Y%m%d')
+    return build_response(rows, headers, f'equipe_{stamp}', fmt)
 
 
 # ─────────────────────────────────────────────
