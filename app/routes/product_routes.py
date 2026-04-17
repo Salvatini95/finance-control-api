@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.extensions import db
-from app.models import Product, User, StockMovement
+from app.models import Product, User, StockMovement, ServiceRecord, Quote, Order
 from datetime import date
 
 product_bp = Blueprint("products", __name__)
@@ -164,6 +164,22 @@ def delete_product(product_id):
     p    = _find_product(product_id, user)
     if not p:
         return jsonify({"msg": "Produto não encontrado"}), 404
+
+    # ── Remove dependências antes de deletar o produto ──────────────
+    # 1. Movimentações de estoque
+    StockMovement.query.filter_by(product_id=p.id).delete()
+
+    # 2. Registros de serviço
+    ServiceRecord.query.filter_by(product_id=p.id).delete()
+
+    # 3. Orçamentos que referenciam este produto via items_json
+    #    Não deletamos o orçamento — apenas limpamos a FK direta se existir
+    #    (Quote não tem product_id direto, apenas em items_json — sem FK real)
+
+    # 4. Ordens de serviço: idem — product_id não é FK direta em Order
+
+    # 5. Deleta o produto
     db.session.delete(p)
     db.session.commit()
+
     return jsonify({"msg": "Produto removido com sucesso"}), 200
