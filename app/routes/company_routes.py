@@ -30,7 +30,6 @@ def get_company():
     user = _get_current_user()
     if not user or not user.company_id:
         return jsonify({}), 200
-
     c = user.company
     return jsonify({
         "id":              c.id,
@@ -63,6 +62,48 @@ def update_company():
 
 
 # =========================
+# PERFIL DO USUÁRIO LOGADO
+# =========================
+
+@company_bp.route("/me", methods=["GET"])
+@jwt_required()
+def get_me():
+    user = _get_current_user()
+    return jsonify({
+        "id":    user.id,
+        "name":  user.name,
+        "email": user.email,
+        "role":  user.role,
+    }), 200
+
+
+@company_bp.route("/me", methods=["PUT"])
+@jwt_required()
+def update_me():
+    user = _get_current_user()
+    data = request.get_json()
+
+    name         = data.get("name", "").strip()
+    old_password = data.get("old_password", "").strip()
+    new_password = data.get("new_password", "").strip()
+
+    if name:
+        user.name = name
+
+    if new_password:
+        if not old_password:
+            return jsonify({"msg": "Informe a senha atual"}), 400
+        if not user.check_password(old_password):
+            return jsonify({"msg": "Senha atual incorreta"}), 400
+        if len(new_password) < 6:
+            return jsonify({"msg": "Nova senha deve ter no mínimo 6 caracteres"}), 400
+        user.set_password(new_password)
+
+    db.session.commit()
+    return jsonify({"msg": "Perfil atualizado com sucesso"}), 200
+
+
+# =========================
 # LISTAR USUÁRIOS DA EMPRESA
 # =========================
 
@@ -74,7 +115,6 @@ def list_users():
     if err: return err
 
     users = User.query.filter_by(company_id=user.company_id).all()
-
     return jsonify([{
         "id":     u.id,
         "name":   u.name,
@@ -110,7 +150,6 @@ def create_user():
     if User.query.filter_by(email=email).first():
         return jsonify({"msg": "Email já cadastrado"}), 409
 
-    # limite temporário para desenvolvimento — ajustar quando implementar planos
     company    = user.company
     user_count = User.query.filter_by(company_id=company.id).count()
     if company.plan == "free" and user_count >= 10:
@@ -124,15 +163,10 @@ def create_user():
         active     = True,
     )
     new_user.set_password(password)
-
     db.session.add(new_user)
     db.session.commit()
 
-    return jsonify({
-        "msg":  "Usuário criado com sucesso",
-        "id":   new_user.id,
-        "role": new_user.role,
-    }), 201
+    return jsonify({"msg": "Usuário criado com sucesso", "id": new_user.id, "role": new_user.role}), 201
 
 
 # =========================
@@ -155,7 +189,6 @@ def update_user(user_id):
 
     if role not in VALID_ROLES:
         return jsonify({"msg": f"Role inválida. Use: {VALID_ROLES}"}), 400
-
     if target.id == admin.id and role != "admin":
         return jsonify({"msg": "Você não pode alterar sua própria role"}), 400
 
@@ -193,5 +226,4 @@ def delete_user(user_id):
 
     target.active = False
     db.session.commit()
-
     return jsonify({"msg": "Usuário desativado com sucesso"}), 200
