@@ -1,737 +1,513 @@
-import csv
-import io
-import json
-from datetime import datetime
-from flask import Blueprint, request, jsonify, abort
+"""
+import_routes.py — Importação de dados no SV Finance
+Suporta:
+  - CSV genérico com mapeamento customizado de colunas (Fase 2)
+  - Templates pré-mapeados: Conta Azul, Omie, Nibo (Fase 3)
+  - Preview antes de confirmar
+  - Detecção e tratamento de duplicatas
+"""
+
+from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import db, User, Transaction, Bill, Client, Product, StockMovement, Order
-from functools import wraps
+from app.extensions import db
+from app.models import User, Client, Product, Transaction, StockMovement
+from datetime import date, datetime
+import csv, io, re
 
-import_bp = Blueprint('import', __name__)
-
-
-def get_current_user():
-    return User.query.get(get_jwt_identity())
+import_bp = Blueprint("import", __name__)
 
 
-def admin_required(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        user = get_current_user()
-        if not user or user.role != 'admin':
-            abort(403)
-        return fn(*args, **kwargs)
-    return wrapper
+def _get_user(uid): return User.query.get(int(uid))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS DE NORMALIZAÇÃO
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _parse_float(v):
+    if not v: return 0.0
+    return float(re.sub(r"[^\d,\.]", "", str(v)).replace(",", ".") or 0)
+
+def _parse_date(v):
+    """Aceita DD/MM/YYYY, YYYY-MM-DD ou MM/DD/YYYY."""
+    if not v: return str(date.today())
+    v = str(v).strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y"):
+        try: return datetime.strptime(v, fmt).strftime("%Y-%m-%d")
+        except: continue
+    return str(date.today())
+
+def _clean_doc(v):
+    """Remove formatação de CPF/CNPJ."""
+    return re.sub(r"\D", "", str(v or ""))
+
+def _parse_bool(v, true_values=("sim","true","1","ativo","yes","s")):
+    return str(v).strip().lower() in true_values
+
+def _already_exists_client(user, name, document):
+    """Verifica duplicata por nome OU documento."""
+    q = Client.query.filter_by(company_id=user.company_id) if user.company_id \
+        else Client.query.filter_by(user_id=user.id)
+    doc = _clean_doc(document)
+    if doc:
+        c = q.filter(Client.document == doc).first()
+        if c: return c
+    return q.filter(Client.name.ilike(name.strip())).first() if name else None
+
+def _already_exists_product(user, name, sku):
+    q = Product.query.filter_by(company_id=user.company_id) if user.company_id \
+        else Product.query.filter_by(user_id=user.id)
+    if sku:
+        p = q.filter(Product.sku == sku.strip()).first()
+        if p: return p
+    return q.filter(Product.name.ilike(name.strip())).first() if name else None
+
+def _read_csv(text):
+    """Lê CSV em texto e retorna (headers, rows)."""
+    reader = csv.DictReader(io.StringIO(text))
+    rows   = list(reader)
+    return reader.fieldnames or [], rows
 
 
-def safe_float(val, default=0.0):
-    try:
-        return float(str(val).replace(',', '.').strip())
-    except Exception:
-        return default
+# ─────────────────────────────────────────────────────────────────────────────
+# MAPEAMENTOS DE SISTEMAS ESPECÍFICOS
+# ─────────────────────────────────────────────────────────────────────────────
+
+SYSTEM_MAPS = {
+    # ── CONTA AZUL ──────────────────────────────────────────────────────────
+    "conta_azul": {
+        "clientes": {
+            "name":     ["Nome"],
+            "document": ["CPF/CNPJ"],
+            "email":    ["Email"],
+            "phone":    ["Celular", "Telefone"],
+            "address":  ["Logradouro", "Numero", "Bairro", "Cidade", "Estado"],
+            "active":   ["Ativo"],
+        },
+        "transacoes": {
+            "date":        ["Data"],
+            "description": ["Descricao"],
+            "amount":      ["Valor"],
+            "type":        ["Tipo"],       # Receita→income, Despesa→expense
+            "category":    ["Categoria"],
+        },
+        "produtos": {
+            "name":      ["Nome"],
+            "sku":       ["Codigo"],
+            "price":     ["Preco de Venda"],
+            "cost":      ["Custo"],
+            "category":  ["Categoria"],
+            "type":      ["Tipo"],         # Produto→product, Serviço→service
+            "unit":      ["Unidade"],
+            "stock_qty": ["Estoque Atual"],
+            "stock_min": ["Estoque Minimo"],
+        }
+    },
+    # ── OMIE ────────────────────────────────────────────────────────────────
+    "omie": {
+        "clientes": {
+            "name":     ["razao_social", "nome_fantasia"],
+            "document": ["cnpj_cpf"],
+            "email":    ["email"],
+            "phone":    ["telefone1_numero"],
+            "active":   ["inativo"],       # 0=ativo, 1=inativo
+        },
+        "transacoes": {
+            "date":        ["data_lancamento"],
+            "description": ["descricao"],
+            "amount":      ["valor"],
+            "type":        ["tipo"],       # R→income, D→expense
+            "category":    ["categoria"],
+        },
+        "produtos": {
+            "name":      ["descricao"],
+            "sku":       ["codigo_produto"],
+            "price":     ["preco_unitario"],
+            "cost":      ["valor_unitario_compra"],
+            "type":      ["tipo"],         # P→product, S→service
+            "unit":      ["unidade"],
+        }
+    },
+    # ── NIBO ────────────────────────────────────────────────────────────────
+    "nibo": {
+        "clientes": {
+            "name":     ["Nome"],
+            "document": ["Documento"],
+            "email":    ["Email"],
+            "phone":    ["Celular", "Telefone"],
+            "active":   ["Ativo"],         # true/false
+        },
+        "transacoes": {
+            "date":        ["Data"],
+            "description": ["Descricao"],
+            "amount":      ["Valor"],
+            "type":        ["TipoTransacao"],  # Recebimento→income, Pagamento→expense
+            "category":    ["Categoria", "SubCategoria"],
+        },
+        "produtos": {
+            "name":      ["Nome"],
+            "sku":       ["Codigo"],
+            "price":     ["PrecoVenda"],
+            "cost":      ["CustoMedio"],
+            "type":      ["Tipo"],         # Produto→product, Serviço→service
+            "unit":      ["UnidadeMedida"],
+            "stock_qty": ["EstoqueAtual"],
+            "stock_min": ["EstoqueMinimo"],
+        }
+    },
+}
+
+def _get_val(row, keys):
+    """Pega o primeiro campo que existir no row."""
+    for k in keys:
+        if k in row and str(row[k]).strip():
+            return str(row[k]).strip()
+    return ""
+
+def _resolve_type_transacao(v, sistema):
+    v = str(v).strip().lower()
+    if sistema == "conta_azul":
+        return "income" if "receita" in v else "expense"
+    if sistema == "omie":
+        return "income" if v == "r" else "expense"
+    if sistema == "nibo":
+        return "income" if "recebimento" in v else "expense"
+    # genérico
+    return "income" if v in ("income","receita","entrada","r","recebimento","1") else "expense"
+
+def _resolve_type_produto(v, sistema):
+    v = str(v).strip().lower()
+    if sistema in ("conta_azul", "nibo"):
+        return "product" if "produto" in v else "service"
+    if sistema == "omie":
+        return "product" if v == "p" else "service"
+    return "product" if v in ("product","produto","p","1") else "service"
+
+def _resolve_active_client(v, sistema):
+    v = str(v).strip().lower()
+    if sistema == "omie":
+        return v == "0"   # inativo=0 significa ativo
+    return v in ("sim","true","1","ativo","yes","s")
+
+def _build_address_ca(row):
+    parts = [row.get("Logradouro",""), row.get("Numero",""),
+             row.get("Bairro",""), row.get("Cidade",""), row.get("Estado","")]
+    return ", ".join(p for p in parts if p)
 
 
-def safe_date_str(val):
-    """Converte qualquer formato de data para string yyyy-mm-dd."""
-    if not val:
-        return None
-    val = str(val).strip()
-    for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y'):
-        try:
-            return datetime.strptime(val, fmt).strftime('%Y-%m-%d')
-        except Exception:
-            continue
-    return None
+# ─────────────────────────────────────────────────────────────────────────────
+# CONVERSOR: ROW → OBJETO NORMALIZADO
+# ─────────────────────────────────────────────────────────────────────────────
 
-
-def parse_csv_or_xlsx(file):
-    """Lê arquivo CSV ou XLSX e retorna (headers, rows)."""
-    fname = file.filename or ''
-    if fname.endswith('.xlsx') or fname.endswith('.xls'):
-        try:
-            import openpyxl
-            wb   = openpyxl.load_workbook(io.BytesIO(file.read()), data_only=True)
-            ws   = wb.active
-            rows = list(ws.iter_rows(values_only=True))
-            if not rows:
-                return [], []
-            headers = [str(c).strip() if c is not None else '' for c in rows[0]]
-            data    = []
-            for row in rows[1:]:
-                data.append({headers[i]: (str(row[i]).strip() if row[i] is not None else '') for i in range(len(headers))})
-            return headers, data
-        except ImportError:
-            return [], []
+def _row_to_client(row, sistema, col_map=None):
+    """Converte linha CSV para dict padronizado de cliente."""
+    if sistema == "generico":
+        m = col_map or {}
+        name     = row.get(m.get("name",""),     row.get("nome", row.get("name", "")))
+        document = row.get(m.get("document",""), row.get("cpf_cnpj", row.get("document", "")))
+        email    = row.get(m.get("email",""),    row.get("email", ""))
+        phone    = row.get(m.get("phone",""),    row.get("telefone", row.get("phone", "")))
+        address  = row.get(m.get("address",""),  row.get("endereco", row.get("address", "")))
+        active   = True
     else:
-        content = file.read().decode('utf-8-sig')
-        reader  = csv.DictReader(io.StringIO(content))
-        headers = list(reader.fieldnames or [])
-        data    = [dict(row) for row in reader]
-        return headers, data
+        mp      = SYSTEM_MAPS[sistema]["clientes"]
+        name    = _get_val(row, mp["name"])
+        document= _get_val(row, mp["document"])
+        email   = _get_val(row, mp["email"])
+        phone   = _get_val(row, mp["phone"])
+        active  = _resolve_active_client(_get_val(row, mp["active"]), sistema)
+        address = _build_address_ca(row) if sistema == "conta_azul" else \
+                  _get_val(row, ["endereco","address","Logradouro"])
+
+    return {"name": name, "document": _clean_doc(document),
+            "email": email, "phone": phone,
+            "address": address, "active": active}
 
 
-def resolve(row, field, mapping, aliases):
-    """Resolve valor de um campo via mapping explícito ou alias automático."""
-    if field in mapping and mapping[field] in row:
-        return str(row[mapping[field]]).strip()
-    for alias in aliases:
-        if alias in row:
-            return str(row[alias]).strip()
-    return ''
-
-
-def _next_order_number(user, prefix='PED'):
-    """Gera número sequencial por prefixo e ano."""
-    year = datetime.today().year
-    if user.company_id:
-        all_orders = Order.query.filter_by(company_id=user.company_id).all()
+def _row_to_transaction(row, sistema, col_map=None):
+    if sistema == "generico":
+        m = col_map or {}
+        date_v  = row.get(m.get("date",""),        row.get("data", row.get("date", "")))
+        desc    = row.get(m.get("description",""),  row.get("descricao", row.get("description", "")))
+        amount  = row.get(m.get("amount",""),        row.get("valor", row.get("amount", "0")))
+        type_v  = row.get(m.get("type",""),          row.get("tipo", row.get("type", "income")))
+        cat     = row.get(m.get("category",""),      row.get("categoria", row.get("category", "")))
+        t_type  = _resolve_type_transacao(type_v, "generico")
     else:
-        all_orders = Order.query.filter_by(user_id=user.id).all()
-    count = sum(1 for o in all_orders if o.number.startswith(f'{prefix}-{year}')) + 1
-    return f'{prefix}-{year}-{count:03d}'
+        mp     = SYSTEM_MAPS[sistema]["transacoes"]
+        date_v = _get_val(row, mp["date"])
+        desc   = _get_val(row, mp["description"])
+        amount = _get_val(row, mp["amount"])
+        type_v = _get_val(row, mp["type"])
+        cat    = _get_val(row, mp["category"])
+        t_type = _resolve_type_transacao(type_v, sistema)
+
+    return {"date": _parse_date(date_v), "description": desc,
+            "amount": _parse_float(amount), "type": t_type,
+            "category": cat, "source": "import"}
 
 
-def _find_or_create_client(client_name, user):
-    """
-    Encontra cliente pelo nome ou cria um novo.
-    Se não houver nome, busca/cria cliente genérico 'Cliente Importado'
-    para não violar o NOT NULL do client_id na Order.
-    """
-    name = (client_name or '').strip() or 'Cliente Importado'
+def _row_to_product(row, sistema, col_map=None):
+    if sistema == "generico":
+        m = col_map or {}
+        name  = row.get(m.get("name",""),      row.get("nome", row.get("name", "")))
+        sku   = row.get(m.get("sku",""),        row.get("sku", row.get("codigo", "")))
+        price = row.get(m.get("price",""),      row.get("preco", row.get("price", "0")))
+        cost  = row.get(m.get("cost",""),       row.get("custo", row.get("cost", "0")))
+        cat   = row.get(m.get("category",""),   row.get("categoria", row.get("category", "")))
+        type_v= row.get(m.get("type",""),       row.get("tipo", row.get("type", "product")))
+        unit  = row.get(m.get("unit",""),       row.get("unidade", row.get("unit", "un")))
+        stock = row.get(m.get("stock_qty",""),  row.get("estoque", row.get("stock_qty", "0")))
+        s_min = row.get(m.get("stock_min",""),  row.get("estoque_min", row.get("stock_min", "0")))
+        p_type = _resolve_type_produto(type_v, "generico")
+    else:
+        mp     = SYSTEM_MAPS[sistema]["produtos"]
+        name   = _get_val(row, mp["name"])
+        sku    = _get_val(row, mp.get("sku", ["sku"]))
+        price  = _get_val(row, mp["price"])
+        cost   = _get_val(row, mp["cost"])
+        cat    = _get_val(row, mp.get("category", ["categoria","Categoria"]))
+        type_v = _get_val(row, mp["type"])
+        unit   = _get_val(row, mp["unit"])
+        stock  = _get_val(row, mp.get("stock_qty", ["stock_qty"]))
+        s_min  = _get_val(row, mp.get("stock_min", ["stock_min"]))
+        p_type = _resolve_type_produto(type_v, sistema)
 
-    existing = Client.query.filter_by(
-        company_id=user.company_id,
-        name=name
-    ).first()
-    if existing:
-        return existing
-
-    new_client = Client(
-        name       = name,
-        company_id = user.company_id,
-        user_id    = user.id,
-        created_at = datetime.today().strftime('%Y-%m-%d'),
-    )
-    db.session.add(new_client)
-    db.session.flush()
-    return new_client
-
-
-def _is_sale_source(raw_source, raw_type):
-    """Detecta se a linha representa uma venda."""
-    source_lower = raw_source.lower()
-    return source_lower in (
-        'sale', 'venda', 'vendas', 'pedido', 'ped', 'os',
-        'ordem de servico', 'ordem de serviço', 'order'
-    ) or (
-        raw_type in ('income', 'receita') and
-        source_lower in ('sale', 'venda', 'vendas')
-    )
+    return {"name": name, "sku": sku or None,
+            "price": _parse_float(price), "cost": _parse_float(cost),
+            "category": cat, "type": p_type,
+            "unit": unit or "un",
+            "stock_qty_initial": _parse_float(stock),
+            "stock_min": _parse_float(s_min)}
 
 
-# ─────────────────────────────────────────────
-# ROTA PRINCIPAL
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# ENDPOINT: PREVIEW (não salva nada)
+# ─────────────────────────────────────────────────────────────────────────────
 
-@import_bp.route('/import/<module>', methods=['POST'])
+@import_bp.route("/import/preview", methods=["POST"])
 @jwt_required()
-def import_module(module):
-    user = get_current_user()
+def preview_import():
+    """
+    Recebe CSV em texto + parâmetros, retorna preview sem salvar.
+    Body JSON:
+      csv_text   : string com conteúdo do arquivo
+      entity     : "clientes" | "transacoes" | "produtos"
+      sistema    : "generico" | "conta_azul" | "omie" | "nibo"
+      col_map    : { campo_sv: coluna_csv } — só para sistema=generico
+    """
+    user = _get_user(get_jwt_identity())
+    data = request.get_json()
+    if not data or not data.get("csv_text"):
+        return jsonify({"error": "csv_text é obrigatório"}), 400
 
-    if 'file' not in request.files:
-        return jsonify({'error': 'Nenhum arquivo enviado'}), 400
+    csv_text = data["csv_text"]
+    entity   = data.get("entity", "transacoes")
+    sistema  = data.get("sistema", "generico")
+    col_map  = data.get("col_map", {})
 
-    mapping_raw = request.form.get('mapping', '{}')
-    try:
-        mapping = json.loads(mapping_raw)
-    except Exception:
-        mapping = {}
-
-    file          = request.files['file']
-    headers, rows = parse_csv_or_xlsx(file)
-
+    headers, rows = _read_csv(csv_text)
     if not rows:
-        return jsonify({'error': 'Arquivo vazio ou inválido'}), 400
+        return jsonify({"error": "CSV vazio ou sem dados"}), 400
 
-    handlers = {
-        'transactions': import_transactions,
-        'bills':        import_bills,
-        'clients':      import_clients,
-        'products':     import_products,
-        'team':         import_team,
-    }
+    preview  = []
+    warnings = []
 
-    if module not in handlers:
-        return jsonify({'error': f'Módulo "{module}" não suporta importação'}), 400
-
-    result = handlers[module](rows, mapping, user)
-    db.session.commit()
-    return jsonify(result)
-
-
-# ─────────────────────────────────────────────
-# TRANSAÇÕES
-# Detecta automaticamente se é venda e cria Order
-# ─────────────────────────────────────────────
-
-def import_transactions(rows, mapping, user):
-    imported          = 0
-    skipped           = 0
-    orders_created    = 0
-    errors            = []
-    orders_no_client  = []  # ordens criadas sem cliente identificado
-
-    ALIASES = {
-        'type':        ['Tipo', 'tipo', 'Natureza', 'natureza'],
-        'description': ['Descrição', 'descricao', 'Histórico', 'historico', 'Description', 'Memo'],
-        'amount':      ['Valor', 'valor', 'Amount', 'Valor Lançamento'],
-        'category':    ['Categoria', 'categoria', 'Category', 'Plano de Contas'],
-        'date':        ['Data', 'data', 'Date', 'Competência', 'competencia', 'Data Lançamento'],
-        'source':      ['Origem', 'origem', 'Source', 'Fonte', 'Tipo Lançamento'],
-        # campos opcionais para compor a order
-        'client':      ['Cliente', 'cliente', 'Client', 'Razão Social', 'Sacado'],
-        'item_name':   ['Produto', 'produto', 'Item', 'item', 'Serviço', 'servico', 'Descrição do Item'],
-        'item_qty':    ['Quantidade', 'quantidade', 'Qtd', 'qtd', 'Qty'],
-        'item_price':  ['Preço Unitário', 'preco_unitario', 'Unit Price', 'Preço Unit', 'Vlr Unit'],
-        'order_number':['Número Pedido', 'numero_pedido', 'N. Pedido', 'Order Number', 'Nº OS', 'Nº Pedido'],
-    }
-
-    today = datetime.today().strftime('%Y-%m-%d')
-
-    for i, row in enumerate(rows, start=2):
+    for i, row in enumerate(rows[:5]):   # preview das 5 primeiras linhas
         try:
-            # ── Tipo ──────────────────────────────────────
-            raw_type = resolve(row, 'type', mapping, ALIASES['type']).lower()
-            if raw_type in ('receita', 'entrada', 'recebimento', 'income', 'c', 'crédito', 'credito'):
-                t_type = 'income'
-            elif raw_type in ('despesa', 'saída', 'saida', 'pagamento', 'expense', 'd', 'débito', 'debito'):
-                t_type = 'expense'
+            if entity == "clientes":
+                obj = _row_to_client(row, sistema, col_map)
+                dup = _already_exists_client(user, obj["name"], obj["document"])
+                obj["_duplicate"] = dup.id if dup else None
+                obj["_duplicate_name"] = dup.name if dup else None
+            elif entity == "transacoes":
+                obj = _row_to_transaction(row, sistema, col_map)
+                obj["_duplicate"] = None
             else:
-                errors.append({'row': i, 'field': 'Tipo', 'message': f'Valor "{raw_type}" não reconhecido. Use: receita ou despesa'})
-                skipped += 1
-                continue
-
-            # ── Descrição (obrigatório) ───────────────────
-            description = resolve(row, 'description', mapping, ALIASES['description'])
-            if not description:
-                errors.append({'row': i, 'field': 'Descrição', 'message': 'Descrição obrigatória'})
-                skipped += 1
-                continue
-
-            # ── Valor (obrigatório) ───────────────────────
-            raw_amount = resolve(row, 'amount', mapping, ALIASES['amount'])
-            amount     = safe_float(raw_amount)
-            if amount <= 0:
-                errors.append({'row': i, 'field': 'Valor', 'message': f'Valor "{raw_amount}" inválido ou zero'})
-                skipped += 1
-                continue
-
-            category = resolve(row, 'category', mapping, ALIASES['category']) or 'Importado'
-            date_str = safe_date_str(resolve(row, 'date', mapping, ALIASES['date'])) or today
-
-            # ── Detecta se é venda ────────────────────────
-            raw_source     = resolve(row, 'source', mapping, ALIASES['source'])
-            is_sale        = t_type == 'income' and _is_sale_source(raw_source, t_type)
-            source_final   = 'sale' if is_sale else ('import' if not raw_source else raw_source.lower()[:20])
-
-            # ── Cria a Transação ──────────────────────────
-            t = Transaction(
-                company_id  = user.company_id,
-                user_id     = user.id,
-                type        = t_type,
-                description = description,
-                amount      = amount,
-                category    = category,
-                date        = date_str,
-                source      = source_final,
-            )
-            db.session.add(t)
-            db.session.flush()  # gera t.id antes de criar a Order
-            imported += 1
-
-            # ── Se for venda → cria Order vinculada ───────
-            if is_sale:
-                client_name      = resolve(row, 'client',       mapping, ALIASES['client'])
-                item_name        = resolve(row, 'item_name',    mapping, ALIASES['item_name'])  or description
-                item_qty         = safe_float(resolve(row, 'item_qty',   mapping, ALIASES['item_qty']),  1.0)
-                item_price       = safe_float(resolve(row, 'item_price', mapping, ALIASES['item_price']), amount)
-                order_number_csv = resolve(row, 'order_number', mapping, ALIASES['order_number'])
-
-                # Sempre retorna um cliente válido (cria 'Cliente Importado' se necessário)
-                client_obj      = _find_or_create_client(client_name, user)
-                client_id       = client_obj.id
-                sem_cliente     = not client_name or client_name.strip() == ''
-
-                # Monta item único da order
-                item_total = item_qty * item_price
-                items_list = [{
-                    'name':       item_name,
-                    'unit':       'un',
-                    'qty':        item_qty,
-                    'price':      item_price,
-                    'total':      item_total,
-                    'product_id': None,
-                }]
-
-                # Define prefixo (OS se vier "OS" na descrição ou Origem, PED caso contrário)
-                desc_lower = description.lower()
-                src_lower  = raw_source.lower()
-                if 'os-' in desc_lower or 'os ' in desc_lower or src_lower in ('os','ordem de servico','ordem de serviço'):
-                    prefix = 'OS'
-                else:
-                    prefix = 'PED'
-
-                # Usa número do CSV se existir, senão gera
-                order_num = order_number_csv if order_number_csv else _next_order_number(user, prefix)
-
-                order = Order(
-                    number         = order_num,
-                    status         = 'done',
-                    origin         = 'import',
-                    notes          = f'Importado via CSV — {date_str}',
-                    payment_terms  = '',
-                    discount       = 0.0,
-                    items_json     = json.dumps(items_list),
-                    subtotal       = amount,
-                    total          = amount,
-                    created_at     = date_str,
-                    finished_at    = date_str,
-                    client_id      = client_id,
-                    quote_id       = None,
-                    transaction_id = t.id,
-                    user_id        = user.id,
-                    company_id     = user.company_id,
-                )
-                db.session.add(order)
-                db.session.flush()
-
-                # Vincula transaction → order (para o link clicável funcionar)
-                # transaction_id já está na order; order_id vai no lookup do GET /transactions
-
-                orders_created += 1
-
-                # Notifica se não tinha cliente no CSV (usou 'Cliente Importado')
-                if sem_cliente:
-                    orders_no_client.append({
-                        'row':          i,
-                        'order_number': order_num,
-                        'description':  description,
-                        'message':      'Venda criada com cliente "Cliente Importado" — vincule o cliente correto em Vendas',
-                    })
-
+                obj = _row_to_product(row, sistema, col_map)
+                dup = _already_exists_product(user, obj["name"], obj.get("sku"))
+                obj["_duplicate"] = dup.id if dup else None
+                obj["_duplicate_name"] = dup.name if dup else None
+            preview.append(obj)
         except Exception as e:
-            errors.append({'row': i, 'field': '—', 'message': str(e)})
-            skipped += 1
+            warnings.append(f"Linha {i+2}: {str(e)}")
 
-    # Monta info final
-    info = ''
-    if orders_created > 0:
-        info = (
-            f'{orders_created} venda(s) criada(s) automaticamente. '
-            'Clique no número do pedido em Transações para visualizar.'
-        )
-
-    return {
-        'imported':            imported,
-        'skipped':             skipped,
-        'updated':             0,
-        'errors':              errors,
-        'duplicates_notified': [],
-        'orders_created':      orders_created,
-        'orders_no_client':    orders_no_client,
-        'info':                info,
-    }
+    return jsonify({
+        "headers":      headers,
+        "total_rows":   len(rows),
+        "preview":      preview,
+        "warnings":     warnings,
+        "sistema":      sistema,
+        "entity":       entity,
+    }), 200
 
 
-# ─────────────────────────────────────────────
-# CONTAS (BILLS)
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# ENDPOINT: CONFIRMAR IMPORTAÇÃO
+# ─────────────────────────────────────────────────────────────────────────────
 
-def import_bills(rows, mapping, user):
-    imported = 0
-    skipped  = 0
-    errors   = []
+@import_bp.route("/import/confirm", methods=["POST"])
+@jwt_required()
+def confirm_import():
+    """
+    Processa e salva todos os registros.
+    Body JSON:
+      csv_text          : string CSV
+      entity            : "clientes" | "transacoes" | "produtos"
+      sistema           : "generico" | "conta_azul" | "omie" | "nibo"
+      col_map           : { campo_sv: coluna_csv }
+      duplicate_action  : "skip" | "update" | "create_anyway"
+    """
+    user = _get_user(get_jwt_identity())
+    data = request.get_json()
+    if not data or not data.get("csv_text"):
+        return jsonify({"error": "csv_text é obrigatório"}), 400
 
-    ALIASES = {
-        'type':        ['Tipo', 'tipo', 'Natureza'],
-        'description': ['Descrição', 'descricao', 'Histórico', 'historico'],
-        'amount':      ['Valor', 'valor', 'Amount'],
-        'due_date':    ['Vencimento', 'vencimento', 'Data Vencimento', 'Due Date'],
-        'category':    ['Categoria', 'categoria'],
-        'status':      ['Status', 'status', 'Situação'],
-        'notes':       ['Observações', 'observacoes', 'Obs'],
-    }
+    csv_text  = data["csv_text"]
+    entity    = data.get("entity", "transacoes")
+    sistema   = data.get("sistema", "generico")
+    col_map   = data.get("col_map", {})
+    dup_action= data.get("duplicate_action", "skip")  # skip | update | create_anyway
 
-    for i, row in enumerate(rows, start=2):
+    _, rows = _read_csv(csv_text)
+    if not rows:
+        return jsonify({"error": "CSV vazio"}), 400
+
+    created = 0; updated = 0; skipped = 0; errors = []
+
+    for i, row in enumerate(rows):
         try:
-            raw_type = resolve(row, 'type', mapping, ALIASES['type']).lower()
-            if raw_type in ('pagar', 'despesa', 'saída', 'saida', 'payable', 'a pagar'):
-                b_type = 'payable'
-            elif raw_type in ('receber', 'receita', 'entrada', 'receivable', 'a receber'):
-                b_type = 'receivable'
-            else:
-                errors.append({'row': i, 'field': 'Tipo', 'message': f'Valor "{raw_type}" não reconhecido. Use: pagar ou receber'})
-                skipped += 1
-                continue
-
-            description = resolve(row, 'description', mapping, ALIASES['description'])
-            if not description:
-                errors.append({'row': i, 'field': 'Descrição', 'message': 'Descrição obrigatória'})
-                skipped += 1
-                continue
-
-            raw_amount = resolve(row, 'amount', mapping, ALIASES['amount'])
-            amount     = safe_float(raw_amount)
-            if amount <= 0:
-                errors.append({'row': i, 'field': 'Valor', 'message': f'Valor "{raw_amount}" inválido ou zero'})
-                skipped += 1
-                continue
-
-            raw_date = resolve(row, 'due_date', mapping, ALIASES['due_date'])
-            due_date = safe_date_str(raw_date)
-            if not due_date:
-                errors.append({'row': i, 'field': 'Vencimento', 'message': f'Data "{raw_date}" inválida. Use dd/mm/aaaa'})
-                skipped += 1
-                continue
-
-            category = resolve(row, 'category', mapping, ALIASES['category']) or 'Importado'
-            status   = resolve(row, 'status',   mapping, ALIASES['status'])   or 'pending'
-            notes    = resolve(row, 'notes',    mapping, ALIASES['notes'])    or None
-
-            b = Bill(
-                company_id  = user.company_id,
-                user_id     = user.id,
-                type        = b_type,
-                description = description,
-                amount      = amount,
-                category    = category,
-                due_date    = due_date,
-                status      = status,
-                notes       = notes,
-            )
-            db.session.add(b)
-            imported += 1
-
-        except Exception as e:
-            errors.append({'row': i, 'field': '—', 'message': str(e)})
-            skipped += 1
-
-    return {'imported': imported, 'skipped': skipped, 'updated': 0, 'errors': errors, 'duplicates_notified': []}
-
-
-# ─────────────────────────────────────────────
-# CLIENTES
-# ─────────────────────────────────────────────
-
-def import_clients(rows, mapping, user):
-    imported   = 0
-    skipped    = 0
-    updated    = 0
-    errors     = []
-    duplicates = []
-
-    ALIASES = {
-        'name':     ['Nome', 'nome', 'Name', 'Cliente', 'Razão Social'],
-        'email':    ['Email', 'email', 'E-mail'],
-        'phone':    ['Telefone', 'telefone', 'Phone', 'Celular'],
-        'document': ['Documento', 'documento', 'CPF', 'CNPJ', 'CPF/CNPJ'],
-        'address':  ['Endereço', 'endereco', 'Address', 'Logradouro'],
-        'notes':    ['Observações', 'observacoes', 'Obs', 'Nota'],
-    }
-
-    for i, row in enumerate(rows, start=2):
-        try:
-            name = resolve(row, 'name', mapping, ALIASES['name'])
-            if not name:
-                errors.append({'row': i, 'field': 'Nome', 'message': 'Nome obrigatório'})
-                skipped += 1
-                continue
-
-            email    = resolve(row, 'email',    mapping, ALIASES['email'])    or None
-            phone    = resolve(row, 'phone',    mapping, ALIASES['phone'])    or None
-            document = resolve(row, 'document', mapping, ALIASES['document']) or None
-            address  = resolve(row, 'address',  mapping, ALIASES['address'])  or None
-            notes    = resolve(row, 'notes',    mapping, ALIASES['notes'])    or None
-
-            existing = Client.query.filter_by(company_id=user.company_id, name=name).first()
-
-            if existing:
-                has_conflict = (
-                    (email    and existing.email    and existing.email    != email)    or
-                    (document and existing.document and existing.document != document) or
-                    (phone    and existing.phone    and existing.phone    != phone)
-                )
-                if has_conflict:
-                    duplicates.append({
-                        'name':    name,
-                        'message': 'Nome já existe com email/documento/telefone diferente',
-                        'row':     i,
-                    })
-                if email:    existing.email    = email
-                if phone:    existing.phone    = phone
-                if document: existing.document = document
-                if address:  existing.address  = address
-                if notes:    existing.notes    = notes
-                updated += 1
-            else:
-                today = datetime.today().strftime('%Y-%m-%d')
+            if entity == "clientes":
+                obj = _row_to_client(row, sistema, col_map)
+                if not obj["name"]:
+                    skipped += 1; continue
+                dup = _already_exists_client(user, obj["name"], obj["document"])
+                if dup:
+                    if dup_action == "skip":
+                        skipped += 1; continue
+                    elif dup_action == "update":
+                        if obj["email"]: dup.email   = obj["email"]
+                        if obj["phone"]: dup.phone   = obj["phone"]
+                        if obj["address"]: dup.address = obj["address"]
+                        updated += 1; continue
+                    # create_anyway → cria novo
                 c = Client(
-                    company_id = user.company_id,
-                    user_id    = user.id,
-                    name       = name,
-                    email      = email,
-                    phone      = phone,
-                    document   = document,
-                    address    = address,
-                    notes      = notes,
-                    created_at = today,
+                    name=obj["name"], document=obj["document"] or None,
+                    email=obj["email"] or None, phone=obj["phone"] or None,
+                    address=obj["address"] or None, active=obj["active"],
+                    user_id=user.id, company_id=user.company_id,
                 )
-                db.session.add(c)
-                imported += 1
+                db.session.add(c); created += 1
 
-        except Exception as e:
-            errors.append({'row': i, 'field': '—', 'message': str(e)})
-            skipped += 1
-
-    return {
-        'imported':            imported,
-        'skipped':             skipped,
-        'updated':             updated,
-        'errors':              errors,
-        'duplicates_notified': duplicates,
-    }
-
-
-# ─────────────────────────────────────────────
-# PRODUTOS
-# ─────────────────────────────────────────────
-
-def import_products(rows, mapping, user):
-    imported   = 0
-    skipped    = 0
-    updated    = 0
-    errors     = []
-    duplicates = []
-
-    ALIASES = {
-        'name':        ['Nome', 'nome', 'Produto', 'Name'],
-        'sku':         ['SKU', 'sku', 'Código', 'Cod', 'Referência', 'Ref'],
-        'type':        ['Tipo', 'tipo', 'Type'],
-        'category':    ['Categoria', 'categoria', 'Category'],
-        'price':       ['Preço de Venda', 'preco_venda', 'Preço', 'Price', 'Valor Venda'],
-        'cost':        ['Custo', 'custo', 'Cost', 'Valor Custo'],
-        'stock_qty':   ['Estoque', 'estoque', 'Stock', 'Qtd', 'Quantidade'],
-        'stock_min':   ['Estoque Mínimo', 'estoque_min', 'Min Stock', 'Qtd Mínima'],
-        'unit':        ['Unidade', 'unidade', 'Unit', 'Un'],
-        'description': ['Descrição', 'descricao', 'Description', 'Obs'],
-    }
-
-    today = datetime.today().strftime('%Y-%m-%d')
-
-    for i, row in enumerate(rows, start=2):
-        try:
-            name = resolve(row, 'name', mapping, ALIASES['name'])
-            if not name:
-                errors.append({'row': i, 'field': 'Nome', 'message': 'Nome obrigatório'})
-                skipped += 1
-                continue
-
-            sku         = resolve(row, 'sku',         mapping, ALIASES['sku'])         or None
-            p_type      = resolve(row, 'type',        mapping, ALIASES['type']).lower() or 'produto'
-            category    = resolve(row, 'category',    mapping, ALIASES['category'])    or 'Importado'
-            price       = safe_float(resolve(row, 'price',       mapping, ALIASES['price']))
-            cost        = safe_float(resolve(row, 'cost',        mapping, ALIASES['cost']))
-            stock_qty   = safe_float(resolve(row, 'stock_qty',   mapping, ALIASES['stock_qty']))
-            stock_min   = safe_float(resolve(row, 'stock_min',   mapping, ALIASES['stock_min']))
-            unit        = resolve(row, 'unit',        mapping, ALIASES['unit'])        or 'un'
-            description = resolve(row, 'description', mapping, ALIASES['description']) or None
-
-            if p_type in ('produto', 'product', 'prod'):
-                p_type = 'product'
-            elif p_type in ('serviço', 'servico', 'service', 'svc'):
-                p_type = 'service'
-            else:
-                p_type = 'product'
-
-            existing = None
-            if sku:
-                existing = Product.query.filter_by(company_id=user.company_id, sku=sku).first()
-            if not existing:
-                existing = Product.query.filter_by(company_id=user.company_id, name=name).first()
-
-            if existing:
-                has_conflict = (
-                    (price > 0 and existing.price and abs(existing.price - price) > 0.01) or
-                    (cost  > 0 and existing.cost  and abs(existing.cost  - cost)  > 0.01)
+            elif entity == "transacoes":
+                obj = _row_to_transaction(row, sistema, col_map)
+                if not obj["description"] or obj["amount"] == 0:
+                    skipped += 1; continue
+                t = Transaction(
+                    description=obj["description"], amount=obj["amount"],
+                    type=obj["type"], category=obj["category"] or None,
+                    date=obj["date"], source="import",
+                    user_id=user.id, company_id=user.company_id,
                 )
-                if has_conflict:
-                    duplicates.append({
-                        'name':    name,
-                        'sku':     sku or '—',
-                        'message': 'Produto já existe com preço/custo diferente',
-                        'row':     i,
-                    })
-                if sku:         existing.sku         = sku
-                if price > 0:   existing.price       = price
-                if cost  > 0:   existing.cost        = cost
-                if stock_qty:   existing.stock_qty   = stock_qty
-                if stock_min:   existing.stock_min   = stock_min
-                if unit:        existing.unit        = unit
-                if description: existing.description = description
-                if category:    existing.category    = category
-                updated += 1
+                db.session.add(t); created += 1
 
-                if stock_qty > 0:
-                    mv = StockMovement(
-                        company_id = user.company_id,
-                        product_id = existing.id,
-                        user_id    = user.id,
-                        type       = 'ajuste',
-                        qty        = stock_qty,
-                        reason     = 'Ajuste via importação CSV',
-                        date       = today,
-                    )
-                    db.session.add(mv)
-            else:
+            elif entity == "produtos":
+                obj = _row_to_product(row, sistema, col_map)
+                if not obj["name"]:
+                    skipped += 1; continue
+                dup = _already_exists_product(user, obj["name"], obj.get("sku"))
+                if dup:
+                    if dup_action == "skip":
+                        skipped += 1; continue
+                    elif dup_action == "update":
+                        dup.price    = obj["price"] or dup.price
+                        dup.cost     = obj["cost"]  or dup.cost
+                        dup.category = obj["category"] or dup.category
+                        updated += 1; continue
                 p = Product(
-                    company_id  = user.company_id,
-                    user_id     = user.id,
-                    name        = name,
-                    sku         = sku,
-                    type        = p_type,
-                    category    = category,
-                    price       = price,
-                    cost        = cost,
-                    stock_qty   = stock_qty,
-                    stock_min   = stock_min,
-                    unit        = unit,
-                    description = description,
-                    active      = True,
+                    name=obj["name"], sku=obj["sku"],
+                    price=obj["price"], cost=obj["cost"],
+                    category=obj["category"] or None,
+                    type=obj["type"], unit=obj["unit"],
+                    stock_qty=obj["stock_qty_initial"],
+                    stock_min=obj["stock_min"],
+                    active=True,
+                    user_id=user.id, company_id=user.company_id,
                 )
                 db.session.add(p)
                 db.session.flush()
-
-                if stock_qty > 0:
-                    mv = StockMovement(
-                        company_id = user.company_id,
-                        product_id = p.id,
-                        user_id    = user.id,
-                        type       = 'entrada',
-                        qty        = stock_qty,
-                        reason     = 'Estoque inicial via importação CSV',
-                        date       = today,
-                    )
-                    db.session.add(mv)
-
-                imported += 1
+                if p.type == "product" and obj["stock_qty_initial"] > 0:
+                    db.session.add(StockMovement(
+                        type="in", qty=obj["stock_qty_initial"],
+                        cost=obj["cost"] or None, reason="Importação",
+                        date=str(date.today()),
+                        product_id=p.id, user_id=user.id, company_id=user.company_id,
+                    ))
+                created += 1
 
         except Exception as e:
-            errors.append({'row': i, 'field': '—', 'message': str(e)})
-            skipped += 1
+            errors.append(f"Linha {i+2}: {str(e)}")
+            if len(errors) > 20: break   # evita log gigante
 
-    return {
-        'imported':            imported,
-        'skipped':             skipped,
-        'updated':             updated,
-        'errors':              errors,
-        'duplicates_notified': duplicates,
-    }
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Erro ao salvar: {str(e)}"}), 500
+
+    return jsonify({
+        "created": created, "updated": updated,
+        "skipped": skipped, "errors":  errors,
+        "total":   len(rows),
+    }), 200
 
 
-# ─────────────────────────────────────────────
-# EQUIPE (somente admin)
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# ENDPOINT: DETECTAR SISTEMA PELO CABEÇALHO
+# ─────────────────────────────────────────────────────────────────────────────
 
-def import_team(rows, mapping, user):
-    if user.role != 'admin':
-        return {'error': 'Apenas admins podem importar membros da equipe'}
+@import_bp.route("/import/detect", methods=["POST"])
+@jwt_required()
+def detect_system():
+    """
+    Recebe as primeiras linhas do CSV e tenta identificar o sistema de origem.
+    Retorna: { sistema, entity, confidence }
+    """
+    data     = request.get_json()
+    csv_text = data.get("csv_text", "")
+    headers, _ = _read_csv(csv_text)
+    headers_lower = [h.lower() for h in headers]
 
-    imported   = 0
-    skipped    = 0
-    updated    = 0
-    errors     = []
-    duplicates = []
+    def has(*keys): return all(k in headers_lower for k in keys)
 
-    ROLES_VALID = ['admin', 'financial', 'stock', 'seller', 'viewer']
+    # Conta Azul
+    if has("cpf/cnpj", "ativo"):
+        sistema = "conta_azul"
+        entity  = "clientes" if "nome" in headers_lower else \
+                  "transacoes" if "tipo" in headers_lower else "produtos"
+        return jsonify({"sistema": sistema, "entity": entity, "confidence": 0.9})
 
-    ALIASES = {
-        'name':  ['Nome', 'nome', 'Name'],
-        'email': ['Email', 'email', 'E-mail'],
-        'role':  ['Role', 'role', 'Função', 'Perfil', 'Cargo'],
-        'active':['Ativo', 'ativo', 'Active', 'Status'],
-    }
+    if has("preco de venda", "estoque atual"):
+        return jsonify({"sistema": "conta_azul", "entity": "produtos", "confidence": 0.95})
 
-    for i, row in enumerate(rows, start=2):
-        try:
-            name = resolve(row, 'name', mapping, ALIASES['name'])
-            if not name:
-                errors.append({'row': i, 'field': 'Nome', 'message': 'Nome obrigatório'})
-                skipped += 1
-                continue
+    # Omie
+    if has("razao_social", "cnpj_cpf"):
+        return jsonify({"sistema": "omie", "entity": "clientes", "confidence": 0.95})
 
-            email = resolve(row, 'email', mapping, ALIASES['email'])
-            if not email:
-                errors.append({'row': i, 'field': 'Email', 'message': 'Email obrigatório'})
-                skipped += 1
-                continue
+    if has("data_lancamento", "tipo") and "valor" in headers_lower:
+        return jsonify({"sistema": "omie", "entity": "transacoes", "confidence": 0.9})
 
-            role = resolve(row, 'role', mapping, ALIASES['role']).lower() or 'viewer'
-            if role not in ROLES_VALID:
-                errors.append({'row': i, 'field': 'Role', 'message': f'Role "{role}" inválido. Use: {", ".join(ROLES_VALID)}'})
-                skipped += 1
-                continue
+    if has("codigo_produto", "preco_unitario"):
+        return jsonify({"sistema": "omie", "entity": "produtos", "confidence": 0.95})
 
-            raw_active = resolve(row, 'active', mapping, ALIASES['active']).lower()
-            active = raw_active not in ('não', 'nao', 'false', '0', 'inativo')
+    # Nibo
+    if has("tipotransacao", "datacimento") or has("tipotransacao","data"):
+        return jsonify({"sistema": "nibo", "entity": "transacoes", "confidence": 0.9})
 
-            from app.models import User as UserModel
-            existing = UserModel.query.filter_by(email=email).first()
+    if has("preçovenda","customedio") or has("precovenda","custo"):
+        return jsonify({"sistema": "nibo", "entity": "produtos", "confidence": 0.9})
 
-            if existing:
-                if existing.company_id and existing.company_id != user.company_id:
-                    duplicates.append({
-                        'name':    name,
-                        'message': f'Email {email} já pertence a outra empresa',
-                        'row':     i,
-                    })
-                    skipped += 1
-                    continue
+    if "documento" in headers_lower and "tipoDocumento".lower() in headers_lower:
+        return jsonify({"sistema": "nibo", "entity": "clientes", "confidence": 0.85})
 
-                existing.name       = name
-                existing.role       = role
-                existing.active     = active
-                existing.company_id = user.company_id
-                updated += 1
-            else:
-                import secrets
-                temp_password = secrets.token_hex(16)
-
-                new_user = UserModel(
-                    name           = name,
-                    email          = email,
-                    role           = role,
-                    active         = active,
-                    account_type   = 'business',
-                    company_id     = user.company_id,
-                    email_verified = False,
-                )
-                new_user.set_password(temp_password)
-                db.session.add(new_user)
-                imported += 1
-
-        except Exception as e:
-            errors.append({'row': i, 'field': '—', 'message': str(e)})
-            skipped += 1
-
-    info = ''
-    if imported > 0:
-        info = 'Membros importados precisam usar "Esqueci minha senha" para definir sua senha e acessar o sistema.'
-
-    return {
-        'imported':            imported,
-        'skipped':             skipped,
-        'updated':             updated,
-        'errors':              errors,
-        'duplicates_notified': duplicates,
-        'info':                info,
-    }
+    # genérico
+    return jsonify({"sistema": "generico", "entity": "transacoes", "confidence": 0.5})
