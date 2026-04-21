@@ -17,6 +17,7 @@ from app.routes.goal_routes import goal_bp
 from app.routes.import_export_routes import import_export_bp
 from app.routes.import_routes import import_bp
 from app.routes.dre_routes import dre_bp
+from app.routes.cashflow_routes import cashflow_bp
 from app.routes.product_report_routes import product_report_bp
 from app.routes.dev_routes import dev_bp
 
@@ -67,6 +68,7 @@ def create_app():
     app.register_blueprint(import_export_bp,  url_prefix="/api/import-export")
     app.register_blueprint(import_bp,         url_prefix="/api/import-export")
     app.register_blueprint(dre_bp,            url_prefix="/api")
+    app.register_blueprint(cashflow_bp,        url_prefix="/api")
     app.register_blueprint(product_report_bp,  url_prefix="/api")
     app.register_blueprint(dev_bp)
 
