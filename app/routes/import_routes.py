@@ -127,6 +127,37 @@ SYSTEM_MAPS = {
             "unit":      ["unidade"],
         }
     },
+
+    # ── LINX ────────────────────────────────────────────────────────────────
+    # Baseado no Linx ERP / Linx Microvix — exportações padrão dos módulos
+    "linx": {
+        "clientes": {
+            "name":     ["RazaoSocial", "NomeFantasia", "Nome", "NOME", "RAZAO_SOCIAL"],
+            "document": ["CNPJ", "CPF", "CpfCnpj", "CPF_CNPJ", "Documento"],
+            "email":    ["Email", "EMAIL", "email"],
+            "phone":    ["Celular", "Telefone", "CELULAR", "TELEFONE", "Fone"],
+            "address":  ["Logradouro", "Endereco", "ENDERECO", "Endereço"],
+            "active":   ["Ativo", "ATIVO", "Status", "STATUS"],
+        },
+        "transacoes": {
+            "date":        ["DataEmissao", "DataLancamento", "Data", "DATA", "DataMovimento"],
+            "description": ["Descricao", "Historico", "DESCRICAO", "HISTORICO", "NomeProduto"],
+            "amount":      ["Valor", "ValorTotal", "VALOR", "VALOR_TOTAL", "ValorLiquido"],
+            "type":        ["TipoMovimento", "Tipo", "TIPO", "NaturezaOperacao"],
+            "category":    ["Categoria", "GrupoProduto", "CATEGORIA", "ContaContabil"],
+        },
+        "produtos": {
+            "name":      ["DescricaoProduto", "Descricao", "NomeProduto", "DESCRICAO", "Nome"],
+            "sku":       ["CodigoProduto", "Codigo", "SKU", "CODIGO", "CodigoBarras"],
+            "price":     ["PrecoVenda", "PrecoPadrao", "PRECO_VENDA", "Preco"],
+            "cost":      ["PrecoCusto", "CustoMedio", "PRECO_CUSTO", "Custo"],
+            "category":  ["GrupoProduto", "Categoria", "GRUPO", "SubGrupo"],
+            "type":      ["TipoProduto", "Tipo", "TIPO"],
+            "unit":      ["UnidadeMedida", "Unidade", "UN", "UNIDADE"],
+            "stock_qty": ["SaldoAtual", "EstoqueAtual", "SALDO", "Estoque"],
+            "stock_min": ["EstoqueMinimo", "SaldoMinimo", "ESTOQUE_MIN"],
+        }
+    },
     # ── NIBO ────────────────────────────────────────────────────────────────
     "nibo": {
         "clientes": {
@@ -171,6 +202,8 @@ def _resolve_type_transacao(v, sistema):
         return "income" if v == "r" else "expense"
     if sistema == "nibo":
         return "income" if "recebimento" in v else "expense"
+    if sistema == "linx":
+        return "income" if v in ("e","entrada","receita","c","credito","crédito","venda") else "expense"
     # genérico
     return "income" if v in ("income","receita","entrada","r","recebimento","1") else "expense"
 
@@ -180,6 +213,8 @@ def _resolve_type_produto(v, sistema):
         return "product" if "produto" in v else "service"
     if sistema == "omie":
         return "product" if v == "p" else "service"
+    if sistema == "linx":
+        return "service" if v in ("s","servico","serviço","serv") else "product"
     return "product" if v in ("product","produto","p","1") else "service"
 
 def _resolve_active_client(v, sistema):
@@ -220,7 +255,7 @@ def _row_to_client(row, sistema, col_map=None):
 
     return {"name": name, "document": _clean_doc(document),
             "email": email, "phone": phone,
-            "address": address, "active": active}
+            "address": address}
 
 
 def _row_to_transaction(row, sistema, col_map=None):
@@ -393,7 +428,7 @@ def confirm_import():
                 c = Client(
                     name=obj["name"], document=obj["document"] or None,
                     email=obj["email"] or None, phone=obj["phone"] or None,
-                    address=obj["address"] or None, active=obj["active"],
+                    address=obj["address"] or None,
                     user_id=user.id, company_id=user.company_id,
                 )
                 db.session.add(c); created += 1
@@ -498,6 +533,15 @@ def detect_system():
 
     if has("codigo_produto", "preco_unitario"):
         return jsonify({"sistema": "omie", "entity": "produtos", "confidence": 0.95})
+
+    # Linx
+    if has("razaosocial", "cnpj") or has("codigoproduto", "precovenda"):
+        sistema = "linx"
+        entity  = "clientes" if "razaosocial" in headers_lower else                   "produtos" if "codigoproduto" in headers_lower else "transacoes"
+        return jsonify({"sistema": sistema, "entity": entity, "confidence": 0.9})
+
+    if has("datamovimento", "valorliquido") or has("dataemissao", "valortotal"):
+        return jsonify({"sistema": "linx", "entity": "transacoes", "confidence": 0.85})
 
     # Nibo
     if has("tipotransacao", "datacimento") or has("tipotransacao","data"):
