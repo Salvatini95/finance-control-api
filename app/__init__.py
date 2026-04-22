@@ -69,7 +69,7 @@ def create_app():
     app.register_blueprint(company_bp,        url_prefix="/api")
     app.register_blueprint(goal_bp,           url_prefix="/api")
     app.register_blueprint(import_export_bp,  url_prefix="/api/import-export")
-    app.register_blueprint(import_bp,         url_prefix="/api/import-export")
+    app.register_blueprint(import_bp,         url_prefix="/api")
     app.register_blueprint(dre_bp,            url_prefix="/api")
     app.register_blueprint(cashflow_bp,        url_prefix="/api")
     app.register_blueprint(bills_report_bp,    url_prefix="/api")
