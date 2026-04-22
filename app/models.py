@@ -37,16 +37,11 @@ class User(db.Model):
     role         = db.Column(db.String(20),  nullable=False, default="admin")
     account_type = db.Column(db.String(20),  nullable=False, default="business")
 
-    # ✅ NOVOS CAMPOS (EMAIL VERIFICATION)
     email_verified           = db.Column(db.Boolean, default=False)
     email_verification_token = db.Column(db.String(200), nullable=True)
     reset_password_token     = db.Column(db.String(200), nullable=True)
 
-    company_id = db.Column(
-        db.Integer,
-        db.ForeignKey("companies.id", name="fk_user_company"),
-        nullable=True
-    )
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_user_company"), nullable=True)
 
     company_name    = db.Column(db.String(200), nullable=True)
     company_cnpj    = db.Column(db.String(30),  nullable=True)
@@ -60,32 +55,25 @@ class User(db.Model):
         return check_password_hash(self.password, raw_password)
 
     @property
-    def is_admin(self):
-        return self.role == "admin"
-
+    def is_admin(self):   return self.role == "admin"
     @property
-    def can_sell(self):
-        return self.role in ["admin", "seller"]
-
+    def can_sell(self):   return self.role in ["admin", "seller"]
     @property
-    def can_finance(self):
-        return self.role in ["admin", "financial"]
-
+    def can_finance(self):return self.role in ["admin", "financial"]
     @property
-    def can_stock(self):
-        return self.role in ["admin", "stock"]
+    def can_stock(self):  return self.role in ["admin", "stock"]
 
 
 class Transaction(db.Model):
     __tablename__ = "transactions"
 
-    id          = db.Column(db.Integer,      primary_key=True)
-    description = db.Column(db.String(200),  nullable=False)
-    amount      = db.Column(db.Float,        nullable=False)
-    type        = db.Column(db.String(10),   nullable=False)
-    category    = db.Column(db.String(100),  nullable=True)
-    date        = db.Column(db.String(20),   nullable=True)
-    source      = db.Column(db.String(20),   nullable=False, default="manual")
+    id          = db.Column(db.Integer,     primary_key=True)
+    description = db.Column(db.String(200), nullable=False)
+    amount      = db.Column(db.Float,       nullable=False)
+    type        = db.Column(db.String(10),  nullable=False)
+    category    = db.Column(db.String(100), nullable=True)
+    date        = db.Column(db.String(20),  nullable=True)
+    source      = db.Column(db.String(20),  nullable=False, default="manual")
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_transaction_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_transaction_user"),    nullable=False)
@@ -134,18 +122,12 @@ class Product(db.Model):
     service_records = db.relationship("ServiceRecord", backref="product", lazy=True)
 
     @property
-    def profit(self):
-        return self.price - self.cost
-
+    def profit(self): return self.price - self.cost
     @property
     def margin(self):
-        if self.price == 0:
-            return 0.0
-        return round((self.profit / self.price) * 100, 2)
-
+        return 0.0 if self.price == 0 else round((self.profit / self.price) * 100, 2)
     @property
-    def stock_alert(self):
-        return self.type == "product" and self.stock_qty <= self.stock_min
+    def stock_alert(self): return self.type == "product" and self.stock_qty <= self.stock_min
 
 
 class Quote(db.Model):
@@ -219,17 +201,17 @@ class Order(db.Model):
 class StockMovement(db.Model):
     __tablename__ = "stock_movements"
 
-    id         = db.Column(db.Integer,      primary_key=True)
-    type       = db.Column(db.String(10),   nullable=False)
-    qty        = db.Column(db.Float,        nullable=False)
-    cost       = db.Column(db.Float,        nullable=True)
-    reason     = db.Column(db.String(200),  nullable=True)
-    date       = db.Column(db.String(20),   nullable=True)
+    id         = db.Column(db.Integer,     primary_key=True)
+    type       = db.Column(db.String(10),  nullable=False)
+    qty        = db.Column(db.Float,       nullable=False)
+    cost       = db.Column(db.Float,       nullable=True)
+    reason     = db.Column(db.String(200), nullable=True)
+    date       = db.Column(db.String(20),  nullable=True)
 
-    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_stock_company"),  nullable=True)
-    product_id = db.Column(db.Integer, db.ForeignKey("products.id",  name="fk_stock_product"),  nullable=False)
-    order_id   = db.Column(db.Integer, db.ForeignKey("orders.id",    name="fk_stock_order"),    nullable=True)
-    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_stock_user"),     nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_stock_company"), nullable=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id",  name="fk_stock_product"), nullable=False)
+    order_id   = db.Column(db.Integer, db.ForeignKey("orders.id",    name="fk_stock_order"),   nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_stock_user"),    nullable=False)
 
 
 class ServiceRecord(db.Model):
@@ -267,10 +249,26 @@ class Goal(db.Model):
 
     @property
     def progress(self):
-        if self.target == 0:
-            return 0.0
-        return round(min((self.current / self.target) * 100, 100), 1)
-
+        return 0.0 if self.target == 0 else round(min((self.current / self.target) * 100, 100), 1)
     @property
-    def remaining(self):
-        return max(self.target - self.current, 0)
+    def remaining(self): return max(self.target - self.current, 0)
+
+
+class ImportLog(db.Model):
+    __tablename__ = "import_logs"
+
+    id         = db.Column(db.Integer,     primary_key=True)
+    type       = db.Column(db.String(10),  nullable=False)   # import | export
+    entity     = db.Column(db.String(30),  nullable=False)   # clientes | transacoes | produtos
+    sistema    = db.Column(db.String(30),  nullable=True)    # generico | conta_azul | omie | nibo | linx
+    filename   = db.Column(db.String(200), nullable=True)
+    total      = db.Column(db.Integer,     nullable=False, default=0)
+    created    = db.Column(db.Integer,     nullable=False, default=0)
+    updated    = db.Column(db.Integer,     nullable=False, default=0)
+    skipped    = db.Column(db.Integer,     nullable=False, default=0)
+    errors     = db.Column(db.Integer,     nullable=False, default=0)
+    errors_log = db.Column(db.Text,        nullable=True)    # JSON com lista de erros
+    created_at = db.Column(db.String(30),  nullable=False)
+
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_importlog_company"), nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_importlog_user"),    nullable=False)

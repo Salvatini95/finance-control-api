@@ -10,9 +10,9 @@ Suporta:
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.extensions import db
-from app.models import User, Client, Product, Transaction, StockMovement
+from app.models import User, Client, Product, Transaction, StockMovement, ImportLog
 from datetime import date, datetime
-import csv, io, re
+import csv, io, re, json
 
 import_bp = Blueprint("import", __name__)
 
@@ -489,6 +489,28 @@ def confirm_import():
         db.session.rollback()
         return jsonify({"error": f"Erro ao salvar: {str(e)}"}), 500
 
+    # ── Gravar log da importação ──
+    try:
+        log = ImportLog(
+            type       = "import",
+            entity     = entity,
+            sistema    = sistema,
+            filename   = data.get("filename", "arquivo.csv"),
+            total      = len(rows),
+            created    = created,
+            updated    = updated,
+            skipped    = skipped,
+            errors     = len(errors),
+            errors_log = json.dumps(errors[:50]) if errors else None,
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            user_id    = user.id,
+            company_id = user.company_id,
+        )
+        db.session.add(log)
+        db.session.commit()
+    except Exception:
+        pass  # log não pode quebrar a resposta
+
     return jsonify({
         "created": created, "updated": updated,
         "skipped": skipped, "errors":  errors,
@@ -555,3 +577,74 @@ def detect_system():
 
     # genérico
     return jsonify({"sistema": "generico", "entity": "transacoes", "confidence": 0.5})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ENDPOINT: HISTÓRICO DE IMPORTAÇÕES/EXPORTAÇÕES
+# ─────────────────────────────────────────────────────────────────────────────
+
+@import_bp.route("/import/history", methods=["GET"])
+@jwt_required()
+def get_history():
+    user  = _get_user(get_jwt_identity())
+    limit = int(request.args.get("limit", 50))
+    type_ = request.args.get("type")   # import | export | None = ambos
+
+    q = ImportLog.query
+    if user.company_id:
+        q = q.filter_by(company_id=user.company_id)
+    else:
+        q = q.filter_by(user_id=user.id)
+    if type_:
+        q = q.filter_by(type=type_)
+
+    logs = q.order_by(ImportLog.id.desc()).limit(limit).all()
+
+    SISTEMA_LABELS = {
+        "generico":   "CSV Genérico",
+        "conta_azul": "Conta Azul",
+        "omie":       "Omie",
+        "nibo":       "Nibo",
+        "linx":       "Linx",
+    }
+    ENTITY_LABELS = {
+        "clientes":   "Clientes",
+        "transacoes": "Transações",
+        "produtos":   "Produtos",
+    }
+
+    return jsonify([{
+        "id":            l.id,
+        "type":          l.type,
+        "type_label":    "📥 Importação" if l.type == "import" else "📤 Exportação",
+        "entity":        l.entity,
+        "entity_label":  ENTITY_LABELS.get(l.entity, l.entity),
+        "sistema":       l.sistema,
+        "sistema_label": SISTEMA_LABELS.get(l.sistema or "", l.sistema or "—"),
+        "filename":      l.filename or "—",
+        "total":         l.total,
+        "created":       l.created,
+        "updated":       l.updated,
+        "skipped":       l.skipped,
+        "errors":        l.errors,
+        "errors_log":    json.loads(l.errors_log) if l.errors_log else [],
+        "created_at":    l.created_at,
+        "status":        "success" if l.errors == 0 else ("warning" if l.created > 0 else "error"),
+    } for l in logs]), 200
+
+
+@import_bp.route("/import/history/<int:log_id>", methods=["DELETE"])
+@jwt_required()
+def delete_log(log_id):
+    user = _get_user(get_jwt_identity())
+    q = ImportLog.query.filter_by(id=log_id)
+    if user.company_id:
+        q = q.filter_by(company_id=user.company_id)
+    else:
+        q = q.filter_by(user_id=user.id)
+    log = q.first()
+    if not log:
+        return jsonify({"error": "Log não encontrado"}), 404
+    db.session.delete(log)
+    db.session.commit()
+    return jsonify({"msg": "Log removido"}), 200
