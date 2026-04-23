@@ -196,6 +196,7 @@ class Order(db.Model):
     quote_id       = db.Column(db.Integer, db.ForeignKey("quotes.id",       name="fk_order_quote"),       nullable=True)
     transaction_id = db.Column(db.Integer, db.ForeignKey("transactions.id", name="fk_order_transaction"), nullable=True)
     user_id        = db.Column(db.Integer, db.ForeignKey("users.id",        name="fk_order_user"),        nullable=False)
+    seller_id      = db.Column(db.Integer, db.ForeignKey("users.id",        name="fk_order_seller"),      nullable=True)
 
 
 class StockMovement(db.Model):
@@ -272,3 +273,15 @@ class ImportLog(db.Model):
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_importlog_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_importlog_user"),    nullable=False)
+
+class CommissionRule(db.Model):
+    __tablename__ = "commission_rules"
+
+    id         = db.Column(db.Integer,    primary_key=True)
+    seller_id  = db.Column(db.Integer,   db.ForeignKey("users.id",     name="fk_commission_seller"),  nullable=False)
+    admin_id   = db.Column(db.Integer,   db.ForeignKey("users.id",     name="fk_commission_admin"),   nullable=False)
+    company_id = db.Column(db.Integer,   db.ForeignKey("companies.id", name="fk_commission_company"), nullable=True)
+    type       = db.Column(db.String(20), nullable=False, default="percent_total")
+    value      = db.Column(db.Float,     nullable=False, default=0.0)
+    active     = db.Column(db.Boolean,   nullable=False, default=True)
+    created_at = db.Column(db.String(20), nullable=True)
