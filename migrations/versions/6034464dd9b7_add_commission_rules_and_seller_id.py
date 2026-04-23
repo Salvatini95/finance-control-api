@@ -1,14 +1,19 @@
 """add commission_rules and seller_id to orders
 
-Revision ID: add_commission_rules
+Revision ID: 6034464dd9b7
 Revises: 36e2d4953910
 Create Date: 2026-04-22
 """
 from alembic import op
 import sqlalchemy as sa
 
+# revision identifiers, used by Alembic.
+revision = '6034464dd9b7'
+down_revision = '36e2d4953910'
+branch_labels = None
+depends_on = None
+
 def upgrade():
-    # 1. Tabela de regras de comissão
     op.create_table(
         "commission_rules",
         sa.Column("id",         sa.Integer(),     nullable=False),
@@ -27,7 +32,6 @@ def upgrade():
     op.create_index("ix_commission_rules_seller",  "commission_rules", ["seller_id"])
     op.create_index("ix_commission_rules_company", "commission_rules", ["company_id"])
 
-    # 2. Campo seller_id no Order
     op.add_column("orders", sa.Column("seller_id", sa.Integer(), nullable=True))
     op.create_foreign_key("fk_order_seller", "orders", "users", ["seller_id"], ["id"])
 
