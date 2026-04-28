@@ -29,7 +29,6 @@ load_dotenv()
 
 def create_app():
     app = Flask(__name__)
-
     print("🔥 APP INICIALIZADO")
 
     app.config["SECRET_KEY"]                     = os.environ.get("SECRET_KEY")
@@ -46,9 +45,9 @@ def create_app():
             "http://localhost:5174",
             "http://127.0.0.1:5173",
             "https://finance-control-web-five.vercel.app",
-            "https://*.vercel.app",
             "https://svfinance.com.br",
             "https://www.svfinance.com.br",
+            "https://app.svfinance.com.br",
         ],
         supports_credentials=True,
         allow_headers=["Content-Type", "Authorization"],
@@ -72,12 +71,12 @@ def create_app():
     app.register_blueprint(import_export_bp,  url_prefix="/api/import-export")
     app.register_blueprint(import_bp,         url_prefix="/api")
     app.register_blueprint(dre_bp,            url_prefix="/api")
-    app.register_blueprint(cashflow_bp,        url_prefix="/api")
-    app.register_blueprint(bills_report_bp,    url_prefix="/api")
-    app.register_blueprint(sales_report_bp,    url_prefix="/api")
-    app.register_blueprint(stock_report_bp,    url_prefix="/api")
-    app.register_blueprint(product_report_bp,  url_prefix="/api")
+    app.register_blueprint(cashflow_bp,       url_prefix="/api")
+    app.register_blueprint(bills_report_bp,   url_prefix="/api")
+    app.register_blueprint(sales_report_bp,   url_prefix="/api")
+    app.register_blueprint(stock_report_bp,   url_prefix="/api")
+    app.register_blueprint(product_report_bp, url_prefix="/api")
     app.register_blueprint(dev_bp)
-    app.register_blueprint(commission_bp, url_prefix="/api")
+    app.register_blueprint(commission_bp,     url_prefix="/api")
 
     return app
