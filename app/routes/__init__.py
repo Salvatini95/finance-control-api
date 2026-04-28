@@ -1,21 +1,83 @@
-from .auth_routes import auth_bp
-from .transaction_routes import transaction_bp
-from .bill_routes import bill_bp
-from .product_routes import product_bp
-from .quote_routes import quote_bp
-from .client_routes import client_bp
-from .order_routes import order_bp
-from .stock_routes import stock_bp
-from .company_routes import company_bp
+import os
+from datetime import timedelta
+from dotenv import load_dotenv
+from flask import Flask
+from flask_cors import CORS
+from app.extensions import db, jwt, migrate
+from app.routes.auth_routes import auth_bp
+from app.routes.transaction_routes import transaction_bp
+from app.routes.bill_routes import bill_bp
+from app.routes.product_routes import product_bp
+from app.routes.quote_routes import quote_bp
+from app.routes.client_routes import client_bp
+from app.routes.order_routes import order_bp
+from app.routes.stock_routes import stock_bp
+from app.routes.company_routes import company_bp
+from app.routes.goal_routes import goal_bp
+from app.routes.import_export_routes import import_export_bp
+from app.routes.import_routes import import_bp
+from app.routes.dre_routes import dre_bp
+from app.routes.cashflow_routes import cashflow_bp
+from app.routes.bills_report_routes import bills_report_bp
+from app.routes.sales_report_routes import sales_report_bp
+from app.routes.stock_report_routes import stock_report_bp
+from app.routes.product_report_routes import product_report_bp
+from app.routes.dev_routes import dev_bp
+from app.routes.commission_routes import commission_bp
 
+load_dotenv()
 
-def register_routes(app):
-    app.register_blueprint(auth_bp)
-    app.register_blueprint(transaction_bp)
-    app.register_blueprint(bill_bp)
-    app.register_blueprint(product_bp)
-    app.register_blueprint(quote_bp)
-    app.register_blueprint(client_bp)
-    app.register_blueprint(order_bp)
-    app.register_blueprint(stock_bp)
-    app.register_blueprint(company_bp)
+def create_app():
+    app = Flask(__name__)
+    print("🔥 APP INICIALIZADO")
+
+    app.config["SECRET_KEY"]                     = os.environ.get("SECRET_KEY")
+    app.config["JWT_SECRET_KEY"]                 = os.environ.get("JWT_SECRET_KEY")
+    app.config["SQLALCHEMY_DATABASE_URI"]        = os.environ.get("DATABASE_URL")
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["MAX_CONTENT_LENGTH"]             = 4 * 1024 * 1024
+    app.config["JWT_ACCESS_TOKEN_EXPIRES"]       = timedelta(hours=8)
+
+    CORS(
+        app,
+        origins=[
+            "http://localhost:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5173",
+            "https://finance-control-web-five.vercel.app",
+            "https://*.vercel.app",
+            "https://svfinance.com.br",
+            "https://www.svfinance.com.br",
+            "https://app.svfinance.com.br",   # ← adicionado
+        ],
+        supports_credentials=True,
+        allow_headers=["Content-Type", "Authorization"],
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    )
+
+    db.init_app(app)
+    jwt.init_app(app)
+    migrate.init_app(app, db)
+
+    app.register_blueprint(auth_bp,           url_prefix="/api")
+    app.register_blueprint(transaction_bp,    url_prefix="/api")
+    app.register_blueprint(bill_bp,           url_prefix="/api")
+    app.register_blueprint(product_bp,        url_prefix="/api")
+    app.register_blueprint(quote_bp,          url_prefix="/api")
+    app.register_blueprint(client_bp,         url_prefix="/api")
+    app.register_blueprint(order_bp,          url_prefix="/api")
+    app.register_blueprint(stock_bp,          url_prefix="/api")
+    app.register_blueprint(company_bp,        url_prefix="/api")
+    app.register_blueprint(goal_bp,           url_prefix="/api")
+    app.register_blueprint(import_export_bp,  url_prefix="/api/import-export")
+    app.register_blueprint(import_bp,         url_prefix="/api")
+    app.register_blueprint(dre_bp,            url_prefix="/api")
+    app.register_blueprint(cashflow_bp,       url_prefix="/api")
+    app.register_blueprint(bills_report_bp,   url_prefix="/api")
+    app.register_blueprint(sales_report_bp,   url_prefix="/api")
+    app.register_blueprint(stock_report_bp,   url_prefix="/api")
+    app.register_blueprint(product_report_bp, url_prefix="/api")
+    app.register_blueprint(dev_bp)
+    app.register_blueprint(commission_bp,     url_prefix="/api")
+
+    return app
