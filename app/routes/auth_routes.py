@@ -3,16 +3,16 @@ from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identi
 from app.extensions import db
 from app.models import User, Company
 from app.email_service import send_verification_email, send_password_reset_email
-from datetime import date, datetime, timedelta
-import secrets
+from datetime import date
+import secrets, os
 
 auth_bp = Blueprint("auth", __name__)
 
-DEV_MODE = True  # ✅ True = só envia para seu email. False = envia para qualquer email
-
+# Lê do environment — Railway tem DEV_MODE=False configurado
+DEV_MODE = os.environ.get("DEV_MODE", "True").lower() not in ("false", "0", "no")
+APP_URL  = os.environ.get("APP_URL", "https://svfinance.com.br")
 
 def _get_to_email(real_email):
-    """Em DEV_MODE força envio para o email do dev."""
     if DEV_MODE:
         return "salvatiniguilherme@gmail.com"
     return real_email
@@ -73,6 +73,7 @@ def register():
             to_email = _get_to_email(email),
             name     = name,
             token    = verification_token,
+            app_url  = APP_URL,
         )
     except Exception as e:
         print(f"Erro ao enviar email de verificação (PJ): {e}")
@@ -128,6 +129,7 @@ def register_personal():
             to_email = _get_to_email(email),
             name     = name,
             token    = verification_token,
+            app_url  = APP_URL,
         )
     except Exception as e:
         print(f"Erro ao enviar email de verificação (PF): {e}")
@@ -174,7 +176,7 @@ def resend_verification():
     if user.email_verified:
         return jsonify({"msg": "Email já verificado"}), 400
 
-    new_token                    = secrets.token_urlsafe(32)
+    new_token                     = secrets.token_urlsafe(32)
     user.email_verification_token = new_token
     db.session.commit()
 
@@ -183,6 +185,7 @@ def resend_verification():
             to_email = _get_to_email(email),
             name     = user.name or "Usuário",
             token    = new_token,
+            app_url  = APP_URL,
         )
     except Exception as e:
         print(f"Erro ao reenviar email: {e}")
@@ -201,10 +204,8 @@ def forgot_password():
         return jsonify({"msg": "Email é obrigatório"}), 400
 
     user = User.query.filter_by(email=email).first()
-
-    # ✅ mesmo se não encontrar, retorna sucesso (segurança — não revela se email existe)
     if user:
-        reset_token              = secrets.token_urlsafe(32)
+        reset_token               = secrets.token_urlsafe(32)
         user.reset_password_token = reset_token
         db.session.commit()
         try:
@@ -212,6 +213,7 @@ def forgot_password():
                 to_email = _get_to_email(email),
                 name     = user.name or "Usuário",
                 token    = reset_token,
+                app_url  = APP_URL,
             )
         except Exception as e:
             print(f"Erro ao enviar email de reset: {e}")
@@ -266,7 +268,6 @@ def login():
     if not user.active:
         return jsonify({"msg": "Usuário inativo. Contate o administrador."}), 403
 
-    # ✅ bloqueia login se email não verificado
     if not user.email_verified:
         return jsonify({
             "msg":              "Email não verificado. Verifique sua caixa de entrada.",
