@@ -38,7 +38,6 @@ def register():
     company_name = data.get("company_name", "").strip()
     nicho        = data.get("nicho", "generic").strip().lower()
 
-    # Valida nicho — fallback para generic se inválido
     if nicho not in VALID_NICHOS:
         nicho = "generic"
 
@@ -58,7 +57,7 @@ def register():
     new_company = Company(
         name       = company_name,
         plan       = "free",
-        nicho      = nicho,          # ← salva o nicho escolhido
+        nicho      = nicho,
         created_at = str(date.today()),
         active     = True,
     )
@@ -207,6 +206,27 @@ def resend_verification():
 
 
 # =========================
+# AUTO-VERIFICAR (DEV ONLY)
+# Uso: GET http://localhost:5000/api/dev/verify/seu@email.com
+# Em produção retorna 403 automaticamente (DEV_MODE=False no Railway)
+# =========================
+@auth_bp.route("/dev/verify/<email>", methods=["GET"])
+def dev_verify(email):
+    if not DEV_MODE:
+        return jsonify({"msg": "Rota disponível apenas em DEV"}), 403
+
+    user = User.query.filter_by(email=email.lower()).first()
+    if not user:
+        return jsonify({"msg": "Usuário não encontrado"}), 404
+
+    user.email_verified           = True
+    user.email_verification_token = None
+    db.session.commit()
+
+    return jsonify({"msg": f"Usuário {email} verificado com sucesso!"}), 200
+
+
+# =========================
 # ESQUECEU A SENHA
 # =========================
 @auth_bp.route("/forgot-password", methods=["POST"])
@@ -300,7 +320,7 @@ def login():
         "company_id":   user.company_id,
         "company_name": user.company.name  if user.company else "",
         "plan":         user.company.plan  if user.company else "free",
-        "nicho":        user.company.nicho if user.company else "generic",  # ← retorna nicho
+        "nicho":        user.company.nicho if user.company else "generic",
     }), 200
 
 
@@ -324,6 +344,6 @@ def me():
         "company_id":     user.company_id,
         "company_name":   user.company.name  if user.company else "",
         "plan":           user.company.plan  if user.company else "free",
-        "nicho":          user.company.nicho if user.company else "generic",  # ← retorna nicho
+        "nicho":          user.company.nicho if user.company else "generic",
         "email_verified": user.email_verified,
     }), 200
