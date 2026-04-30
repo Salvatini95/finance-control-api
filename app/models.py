@@ -12,6 +12,7 @@ class Company(db.Model):
     address    = db.Column(db.String(300), nullable=True)
     logo       = db.Column(db.Text,        nullable=True)
     plan       = db.Column(db.String(20),  nullable=False, default="free")
+    nicho      = db.Column(db.String(30),  nullable=False, server_default="generic")  # ← NOVO
     created_at = db.Column(db.String(20),  nullable=True)
     active     = db.Column(db.Boolean,     nullable=False, default=True)
 
@@ -259,20 +260,21 @@ class ImportLog(db.Model):
     __tablename__ = "import_logs"
 
     id         = db.Column(db.Integer,     primary_key=True)
-    type       = db.Column(db.String(10),  nullable=False)   # import | export
-    entity     = db.Column(db.String(30),  nullable=False)   # clientes | transacoes | produtos
-    sistema    = db.Column(db.String(30),  nullable=True)    # generico | conta_azul | omie | nibo | linx
+    type       = db.Column(db.String(10),  nullable=False)
+    entity     = db.Column(db.String(30),  nullable=False)
+    sistema    = db.Column(db.String(30),  nullable=True)
     filename   = db.Column(db.String(200), nullable=True)
     total      = db.Column(db.Integer,     nullable=False, default=0)
     created    = db.Column(db.Integer,     nullable=False, default=0)
     updated    = db.Column(db.Integer,     nullable=False, default=0)
     skipped    = db.Column(db.Integer,     nullable=False, default=0)
     errors     = db.Column(db.Integer,     nullable=False, default=0)
-    errors_log = db.Column(db.Text,        nullable=True)    # JSON com lista de erros
+    errors_log = db.Column(db.Text,        nullable=True)
     created_at = db.Column(db.String(30),  nullable=False)
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_importlog_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_importlog_user"),    nullable=False)
+
 
 class CommissionRule(db.Model):
     __tablename__ = "commission_rules"
