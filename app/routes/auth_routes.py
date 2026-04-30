@@ -8,9 +8,14 @@ import secrets, os
 
 auth_bp = Blueprint("auth", __name__)
 
-# Lê do environment — Railway tem DEV_MODE=False configurado
 DEV_MODE = os.environ.get("DEV_MODE", "True").lower() not in ("false", "0", "no")
 APP_URL  = os.environ.get("APP_URL", "https://svfinance.com.br")
+
+# Nichos válidos — qualquer valor fora disso cai para "generic"
+VALID_NICHOS = {
+    "generic", "contador", "barbeiro", "mototaxi",
+    "estetica", "restaurante", "loja", "marceneiro"
+}
 
 def _get_to_email(real_email):
     if DEV_MODE:
@@ -31,6 +36,11 @@ def register():
     password     = data.get("password", "").strip()
     name         = data.get("name", "").strip()
     company_name = data.get("company_name", "").strip()
+    nicho        = data.get("nicho", "generic").strip().lower()
+
+    # Valida nicho — fallback para generic se inválido
+    if nicho not in VALID_NICHOS:
+        nicho = "generic"
 
     if not email or not password:
         return jsonify({"msg": "Email e senha são obrigatórios"}), 400
@@ -48,6 +58,7 @@ def register():
     new_company = Company(
         name       = company_name,
         plan       = "free",
+        nicho      = nicho,          # ← salva o nicho escolhido
         created_at = str(date.today()),
         active     = True,
     )
@@ -83,6 +94,7 @@ def register():
         "company_id":   new_company.id,
         "company_name": new_company.name,
         "plan":         new_company.plan,
+        "nicho":        new_company.nicho,
     }), 201
 
 
@@ -135,8 +147,9 @@ def register_personal():
         print(f"Erro ao enviar email de verificação (PF): {e}")
 
     return jsonify({
-        "msg":  "Conta criada! Verifique seu email para ativar a conta.",
-        "plan": "free",
+        "msg":   "Conta criada! Verifique seu email para ativar a conta.",
+        "plan":  "free",
+        "nicho": "generic",
     }), 201
 
 
@@ -285,8 +298,9 @@ def login():
         "role":         user.role,
         "account_type": user.account_type,
         "company_id":   user.company_id,
-        "company_name": user.company.name if user.company else "",
-        "plan":         user.company.plan if user.company else "free",
+        "company_name": user.company.name  if user.company else "",
+        "plan":         user.company.plan  if user.company else "free",
+        "nicho":        user.company.nicho if user.company else "generic",  # ← retorna nicho
     }), 200
 
 
@@ -308,7 +322,8 @@ def me():
         "role":           user.role,
         "account_type":   user.account_type,
         "company_id":     user.company_id,
-        "company_name":   user.company.name if user.company else "",
-        "plan":           user.company.plan if user.company else "free",
+        "company_name":   user.company.name  if user.company else "",
+        "plan":           user.company.plan  if user.company else "free",
+        "nicho":          user.company.nicho if user.company else "generic",  # ← retorna nicho
         "email_verified": user.email_verified,
     }), 200
