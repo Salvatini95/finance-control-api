@@ -12,9 +12,25 @@ class Company(db.Model):
     address    = db.Column(db.String(300), nullable=True)
     logo       = db.Column(db.Text,        nullable=True)
     plan       = db.Column(db.String(20),  nullable=False, default="free")
-    nicho      = db.Column(db.String(30),  nullable=False, server_default="generic")  # ← NOVO
+    nicho      = db.Column(db.String(30),  nullable=False, server_default="generic")
     created_at = db.Column(db.String(20),  nullable=True)
     active     = db.Column(db.Boolean,     nullable=False, default=True)
+
+    # ── Campos fiscais NF-e ──
+    inscricao_estadual  = db.Column(db.String(30),  nullable=True)
+    inscricao_municipal = db.Column(db.String(30),  nullable=True)
+    regime_tributario   = db.Column(db.String(2),   nullable=True, server_default="1")
+    # regime_tributario: 1=Simples Nacional, 2=Simples Nacional Excesso, 3=Regime Normal, 4=MEI
+    cep                 = db.Column(db.String(10),  nullable=True)
+    logradouro          = db.Column(db.String(200), nullable=True)
+    numero              = db.Column(db.String(20),  nullable=True)
+    complemento         = db.Column(db.String(100), nullable=True)
+    bairro              = db.Column(db.String(100), nullable=True)
+    municipio           = db.Column(db.String(100), nullable=True)
+    uf                  = db.Column(db.String(2),   nullable=True)
+    codigo_municipio    = db.Column(db.String(10),  nullable=True)
+    telefone            = db.Column(db.String(20),  nullable=True)
+    token_focusnfe      = db.Column(db.String(100), nullable=True)  # token sandbox ou produção
 
     users           = db.relationship("User",          backref="company", lazy=True)
     transactions    = db.relationship("Transaction",   backref="company", lazy=True)
@@ -56,13 +72,13 @@ class User(db.Model):
         return check_password_hash(self.password, raw_password)
 
     @property
-    def is_admin(self):   return self.role == "admin"
+    def is_admin(self):    return self.role == "admin"
     @property
-    def can_sell(self):   return self.role in ["admin", "seller"]
+    def can_sell(self):    return self.role in ["admin", "seller"]
     @property
-    def can_finance(self):return self.role in ["admin", "financial"]
+    def can_finance(self): return self.role in ["admin", "financial"]
     @property
-    def can_stock(self):  return self.role in ["admin", "stock"]
+    def can_stock(self):   return self.role in ["admin", "stock"]
 
 
 class Transaction(db.Model):
@@ -116,6 +132,16 @@ class Product(db.Model):
     stock_avg_cost = db.Column(db.Float,       nullable=False, default=0.0)
     services_count = db.Column(db.Integer,     nullable=False, default=0)
 
+    # ── Campos fiscais NF-e ──
+    ncm         = db.Column(db.String(10),  nullable=True)   # Nomenclatura Comum do Mercosul
+    cfop        = db.Column(db.String(10),  nullable=True)   # Código Fiscal de Operações
+    cst_icms    = db.Column(db.String(5),   nullable=True)   # CST ICMS (regime normal)
+    csosn       = db.Column(db.String(5),   nullable=True)   # CSOSN (Simples Nacional)
+    cst_pis     = db.Column(db.String(5),   nullable=True, server_default="07")
+    cst_cofins  = db.Column(db.String(5),   nullable=True, server_default="07")
+    origem      = db.Column(db.String(2),   nullable=True, server_default="0")
+    # origem: 0=Nacional, 1=Estrangeira importação direta, 2=Estrangeira adquirida no mercado interno
+
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_product_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_product_user"),    nullable=False)
 
@@ -163,10 +189,21 @@ class Client(db.Model):
     name       = db.Column(db.String(200), nullable=False)
     email      = db.Column(db.String(200), nullable=True)
     phone      = db.Column(db.String(50),  nullable=True)
-    document   = db.Column(db.String(50),  nullable=True)
+    document   = db.Column(db.String(50),  nullable=True)  # CPF ou CNPJ
     address    = db.Column(db.String(300), nullable=True)
     notes      = db.Column(db.String(500), nullable=True)
     created_at = db.Column(db.String(20),  nullable=True)
+
+    # ── Campos fiscais NF-e ──
+    inscricao_estadual  = db.Column(db.String(30),  nullable=True)
+    cep                 = db.Column(db.String(10),  nullable=True)
+    logradouro          = db.Column(db.String(200), nullable=True)
+    numero              = db.Column(db.String(20),  nullable=True)
+    complemento         = db.Column(db.String(100), nullable=True)
+    bairro              = db.Column(db.String(100), nullable=True)
+    municipio           = db.Column(db.String(100), nullable=True)
+    uf                  = db.Column(db.String(2),   nullable=True)
+    codigo_municipio    = db.Column(db.String(10),  nullable=True)
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_client_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_client_user"),    nullable=False)
@@ -191,6 +228,11 @@ class Order(db.Model):
     total         = db.Column(db.Float,       nullable=False, default=0.0)
     created_at    = db.Column(db.String(20),  nullable=True)
     finished_at   = db.Column(db.String(20),  nullable=True)
+
+    # ── NF-e vinculada ──
+    nfe_chave     = db.Column(db.String(50),  nullable=True)   # chave de acesso da NF-e
+    nfe_status    = db.Column(db.String(20),  nullable=True)   # autorizado | rejeitado | processando
+    nfe_numero    = db.Column(db.String(10),  nullable=True)   # número da nota
 
     company_id     = db.Column(db.Integer, db.ForeignKey("companies.id",    name="fk_order_company"),     nullable=True)
     client_id      = db.Column(db.Integer, db.ForeignKey("clients.id",      name="fk_order_client"),      nullable=False)
