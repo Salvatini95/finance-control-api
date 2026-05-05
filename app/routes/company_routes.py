@@ -32,13 +32,30 @@ def get_company():
         return jsonify({}), 200
     c = user.company
     return jsonify({
+        # ── dados gerais ──
         "id":              c.id,
         "company_name":    c.name,
         "company_cnpj":    c.cnpj,
         "company_address": c.address,
         "company_logo":    c.logo,
         "plan":            c.plan,
+        "nicho":           c.nicho,
         "created_at":      c.created_at,
+        # ── campos fiscais NF-e ──
+        "cnpj":                c.cnpj,
+        "inscricao_estadual":  c.inscricao_estadual,
+        "inscricao_municipal": c.inscricao_municipal,
+        "regime_tributario":   c.regime_tributario or "1",
+        "cep":                 c.cep,
+        "logradouro":          c.logradouro,
+        "numero":              c.numero,
+        "complemento":         c.complemento,
+        "bairro":              c.bairro,
+        "municipio":           c.municipio,
+        "uf":                  c.uf,
+        "codigo_municipio":    c.codigo_municipio,
+        "telefone":            c.telefone,
+        "token_focusnfe":      c.token_focusnfe,
     }), 200
 
 
@@ -52,10 +69,30 @@ def update_company():
     data = request.get_json()
     c    = user.company
 
+    # ── dados gerais ──
     c.name    = data.get("company_name",    c.name)
     c.cnpj    = data.get("company_cnpj",    c.cnpj)
     c.address = data.get("company_address", c.address)
     c.logo    = data.get("company_logo",    c.logo)
+
+    # ── campos fiscais NF-e ──
+    # cnpj pode vir tanto como "cnpj" (fiscal) quanto "company_cnpj" (empresa)
+    if data.get("cnpj"):
+        c.cnpj = data.get("cnpj")
+
+    if data.get("inscricao_estadual")  is not None: c.inscricao_estadual  = data["inscricao_estadual"]
+    if data.get("inscricao_municipal") is not None: c.inscricao_municipal = data["inscricao_municipal"]
+    if data.get("regime_tributario")   is not None: c.regime_tributario   = data["regime_tributario"]
+    if data.get("cep")                 is not None: c.cep                 = data["cep"]
+    if data.get("logradouro")          is not None: c.logradouro          = data["logradouro"]
+    if data.get("numero")              is not None: c.numero              = data["numero"]
+    if data.get("complemento")         is not None: c.complemento         = data["complemento"]
+    if data.get("bairro")              is not None: c.bairro              = data["bairro"]
+    if data.get("municipio")           is not None: c.municipio           = data["municipio"]
+    if data.get("uf")                  is not None: c.uf                  = data["uf"]
+    if data.get("codigo_municipio")    is not None: c.codigo_municipio    = data["codigo_municipio"]
+    if data.get("telefone")            is not None: c.telefone            = data["telefone"]
+    if data.get("token_focusnfe")      is not None: c.token_focusnfe      = data["token_focusnfe"]
 
     db.session.commit()
     return jsonify({"msg": "Dados da empresa atualizados"}), 200
