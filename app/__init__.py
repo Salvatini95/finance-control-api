@@ -24,6 +24,7 @@ from app.routes.stock_report_routes import stock_report_bp
 from app.routes.product_report_routes import product_report_bp
 from app.routes.dev_routes import dev_bp
 from app.routes.commission_routes import commission_bp
+from app.routes.nfe_routes import nfe_bp
 
 load_dotenv()
 
@@ -78,5 +79,6 @@ def create_app():
     app.register_blueprint(product_report_bp, url_prefix="/api")
     app.register_blueprint(dev_bp)
     app.register_blueprint(commission_bp,     url_prefix="/api")
+    app.register_blueprint(nfe_bp,            url_prefix="/api")
 
     return app
