@@ -16,11 +16,9 @@ class Company(db.Model):
     created_at = db.Column(db.String(20),  nullable=True)
     active     = db.Column(db.Boolean,     nullable=False, default=True)
 
-    # ── Campos fiscais NF-e ──
     inscricao_estadual  = db.Column(db.String(30),  nullable=True)
     inscricao_municipal = db.Column(db.String(30),  nullable=True)
     regime_tributario   = db.Column(db.String(2),   nullable=True, server_default="1")
-    # regime_tributario: 1=Simples Nacional, 2=Simples Nacional Excesso, 3=Regime Normal, 4=MEI
     cep                 = db.Column(db.String(10),  nullable=True)
     logradouro          = db.Column(db.String(200), nullable=True)
     numero              = db.Column(db.String(20),  nullable=True)
@@ -30,7 +28,7 @@ class Company(db.Model):
     uf                  = db.Column(db.String(2),   nullable=True)
     codigo_municipio    = db.Column(db.String(10),  nullable=True)
     telefone            = db.Column(db.String(20),  nullable=True)
-    token_focusnfe      = db.Column(db.String(100), nullable=True)  # token sandbox ou produção
+    token_focusnfe      = db.Column(db.String(100), nullable=True)
 
     users           = db.relationship("User",          backref="company", lazy=True)
     transactions    = db.relationship("Transaction",   backref="company", lazy=True)
@@ -41,6 +39,8 @@ class Company(db.Model):
     orders          = db.relationship("Order",         backref="company", lazy=True)
     stock_movements = db.relationship("StockMovement", backref="company", lazy=True)
     service_records = db.relationship("ServiceRecord", backref="company", lazy=True)
+    brand_projects  = db.relationship("BrandProject",  backref="company", lazy=True)
+    brand_assets    = db.relationship("BrandAsset",    backref="company", lazy=True)
 
 
 class User(db.Model):
@@ -132,15 +132,13 @@ class Product(db.Model):
     stock_avg_cost = db.Column(db.Float,       nullable=False, default=0.0)
     services_count = db.Column(db.Integer,     nullable=False, default=0)
 
-    # ── Campos fiscais NF-e ──
-    ncm         = db.Column(db.String(10),  nullable=True)   # Nomenclatura Comum do Mercosul
-    cfop        = db.Column(db.String(10),  nullable=True)   # Código Fiscal de Operações
-    cst_icms    = db.Column(db.String(5),   nullable=True)   # CST ICMS (regime normal)
-    csosn       = db.Column(db.String(5),   nullable=True)   # CSOSN (Simples Nacional)
-    cst_pis     = db.Column(db.String(5),   nullable=True, server_default="07")
-    cst_cofins  = db.Column(db.String(5),   nullable=True, server_default="07")
-    origem      = db.Column(db.String(2),   nullable=True, server_default="0")
-    # origem: 0=Nacional, 1=Estrangeira importação direta, 2=Estrangeira adquirida no mercado interno
+    ncm        = db.Column(db.String(10), nullable=True)
+    cfop       = db.Column(db.String(10), nullable=True)
+    cst_icms   = db.Column(db.String(5),  nullable=True)
+    csosn      = db.Column(db.String(5),  nullable=True)
+    cst_pis    = db.Column(db.String(5),  nullable=True, server_default="07")
+    cst_cofins = db.Column(db.String(5),  nullable=True, server_default="07")
+    origem     = db.Column(db.String(2),  nullable=True, server_default="0")
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_product_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_product_user"),    nullable=False)
@@ -189,21 +187,20 @@ class Client(db.Model):
     name       = db.Column(db.String(200), nullable=False)
     email      = db.Column(db.String(200), nullable=True)
     phone      = db.Column(db.String(50),  nullable=True)
-    document   = db.Column(db.String(50),  nullable=True)  # CPF ou CNPJ
+    document   = db.Column(db.String(50),  nullable=True)
     address    = db.Column(db.String(300), nullable=True)
     notes      = db.Column(db.String(500), nullable=True)
     created_at = db.Column(db.String(20),  nullable=True)
 
-    # ── Campos fiscais NF-e ──
-    inscricao_estadual  = db.Column(db.String(30),  nullable=True)
-    cep                 = db.Column(db.String(10),  nullable=True)
-    logradouro          = db.Column(db.String(200), nullable=True)
-    numero              = db.Column(db.String(20),  nullable=True)
-    complemento         = db.Column(db.String(100), nullable=True)
-    bairro              = db.Column(db.String(100), nullable=True)
-    municipio           = db.Column(db.String(100), nullable=True)
-    uf                  = db.Column(db.String(2),   nullable=True)
-    codigo_municipio    = db.Column(db.String(10),  nullable=True)
+    inscricao_estadual = db.Column(db.String(30),  nullable=True)
+    cep                = db.Column(db.String(10),  nullable=True)
+    logradouro         = db.Column(db.String(200), nullable=True)
+    numero             = db.Column(db.String(20),  nullable=True)
+    complemento        = db.Column(db.String(100), nullable=True)
+    bairro             = db.Column(db.String(100), nullable=True)
+    municipio          = db.Column(db.String(100), nullable=True)
+    uf                 = db.Column(db.String(2),   nullable=True)
+    codigo_municipio   = db.Column(db.String(10),  nullable=True)
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_client_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_client_user"),    nullable=False)
@@ -229,10 +226,9 @@ class Order(db.Model):
     created_at    = db.Column(db.String(20),  nullable=True)
     finished_at   = db.Column(db.String(20),  nullable=True)
 
-    # ── NF-e vinculada ──
-    nfe_chave     = db.Column(db.String(50),  nullable=True)   # chave de acesso da NF-e
-    nfe_status    = db.Column(db.String(20),  nullable=True)   # autorizado | rejeitado | processando
-    nfe_numero    = db.Column(db.String(10),  nullable=True)   # número da nota
+    nfe_chave  = db.Column(db.String(50), nullable=True)
+    nfe_status = db.Column(db.String(20), nullable=True)
+    nfe_numero = db.Column(db.String(10), nullable=True)
 
     company_id     = db.Column(db.Integer, db.ForeignKey("companies.id",    name="fk_order_company"),     nullable=True)
     client_id      = db.Column(db.Integer, db.ForeignKey("clients.id",      name="fk_order_client"),      nullable=False)
@@ -329,3 +325,28 @@ class CommissionRule(db.Model):
     value      = db.Column(db.Float,     nullable=False, default=0.0)
     active     = db.Column(db.Boolean,   nullable=False, default=True)
     created_at = db.Column(db.String(20), nullable=True)
+
+
+class BrandProject(db.Model):
+    __tablename__ = "brand_projects"
+
+    id          = db.Column(db.Integer,     primary_key=True)
+    name        = db.Column(db.String(200), nullable=False)
+    canvas_data = db.Column(db.Text,        nullable=False, server_default="{}")
+    format      = db.Column(db.String(30),  nullable=False, server_default="insta_post")
+    created_at  = db.Column(db.String(20),  nullable=True)
+
+    company_id  = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_brandproj_company"), nullable=True)
+    user_id     = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_brandproj_user"),    nullable=False)
+
+
+class BrandAsset(db.Model):
+    __tablename__ = "brand_assets"
+
+    id         = db.Column(db.Integer,     primary_key=True)
+    filename   = db.Column(db.String(200), nullable=True)
+    url        = db.Column(db.Text,        nullable=False)
+    created_at = db.Column(db.String(20),  nullable=True)
+
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_brandasset_company"), nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_brandasset_user"),    nullable=False)
