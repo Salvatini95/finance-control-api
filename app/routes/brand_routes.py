@@ -2,12 +2,14 @@ from flask import Blueprint, request, jsonify, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.extensions import db
 from app.models import User
-import os, json, io, base64, requests as req
+import os, json, io, base64
+import requests as req
 from datetime import date
 
 brand_bp = Blueprint("brand", __name__)
 
-ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
+REMOVE_BG_KEY  = os.environ.get("REMOVE_BG_API_KEY", "")
 
 
 def _user():
@@ -61,28 +63,39 @@ def ai_copy():
 
 
 # =========================
-# REMOVER FUNDO (rembg)
+# REMOVER FUNDO — Remove.bg
 # =========================
 @brand_bp.route("/brand-studio/remove-bg", methods=["POST"])
 @jwt_required()
 def remove_bg():
+    if not REMOVE_BG_KEY:
+        return jsonify({"msg": "REMOVE_BG_API_KEY não configurada no Railway"}), 500
+
     if "image" not in request.files:
         return jsonify({"msg": "Nenhuma imagem enviada"}), 400
 
     file = request.files["image"]
-    img_bytes = file.read()
 
     try:
-        from rembg import remove
-        result = remove(img_bytes)
-        return send_file(
-            io.BytesIO(result),
-            mimetype="image/png",
-            as_attachment=False,
-            download_name="removed_bg.png",
+        res = req.post(
+            "https://api.remove.bg/v1.0/removebg",
+            files={"image_file": (file.filename, file.read(), file.mimetype)},
+            data={"size": "auto"},
+            headers={"X-Api-Key": REMOVE_BG_KEY},
+            timeout=30,
         )
-    except ImportError:
-        return jsonify({"msg": "rembg não instalado. Adicione 'rembg' ao requirements.txt"}), 500
+
+        if res.status_code == 200:
+            return send_file(
+                io.BytesIO(res.content),
+                mimetype="image/png",
+                as_attachment=False,
+                download_name="removed_bg.png",
+            )
+        else:
+            err = res.json().get("errors", [{}])[0].get("title", "Erro desconhecido")
+            return jsonify({"msg": f"Remove.bg: {err}"}), res.status_code
+
     except Exception as e:
         return jsonify({"msg": f"Erro ao remover fundo: {str(e)}"}), 500
 
@@ -177,13 +190,11 @@ def upload_asset():
     if "file" not in request.files:
         return jsonify({"msg": "Nenhum arquivo enviado"}), 400
 
-    file      = request.files["file"]
-    img_bytes = file.read()
-
-    # Salva como base64 data URL para simplicidade (sem storage externo)
-    mime      = file.mimetype or "image/png"
-    b64       = base64.b64encode(img_bytes).decode("utf-8")
-    data_url  = f"data:{mime};base64,{b64}"
+    file     = request.files["file"]
+    img_bytes= file.read()
+    mime     = file.mimetype or "image/png"
+    b64      = base64.b64encode(img_bytes).decode("utf-8")
+    data_url = f"data:{mime};base64,{b64}"
 
     from app.models import BrandAsset
     asset = BrandAsset(
