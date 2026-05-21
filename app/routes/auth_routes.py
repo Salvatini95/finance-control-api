@@ -11,7 +11,6 @@ auth_bp = Blueprint("auth", __name__)
 DEV_MODE = os.environ.get("DEV_MODE", "True").lower() not in ("false", "0", "no")
 APP_URL  = os.environ.get("APP_URL", "https://svfinance.com.br")
 
-# Nichos válidos — qualquer valor fora disso cai para "generic"
 VALID_NICHOS = {
     "generic", "contador", "barbeiro", "mototaxi",
     "estetica", "restaurante", "loja", "marceneiro"
@@ -21,6 +20,23 @@ def _get_to_email(real_email):
     if DEV_MODE:
         return "salvatiniguilherme@gmail.com"
     return real_email
+
+
+# =========================
+# HEALTH CHECK
+# =========================
+@auth_bp.route("/health", methods=["GET"])
+def health():
+    """
+    Rota de verificação de saúde do servidor.
+    Usada pelo UptimeRobot para monitorar se o sistema está no ar.
+    Não requer autenticação.
+    """
+    return jsonify({
+        "status":  "ok",
+        "service": "sv-finance-api",
+        "version": "1.0.0",
+    }), 200
 
 
 # =========================
@@ -207,8 +223,6 @@ def resend_verification():
 
 # =========================
 # AUTO-VERIFICAR (DEV ONLY)
-# Uso: GET http://localhost:5000/api/dev/verify/seu@email.com
-# Em produção retorna 403 automaticamente (DEV_MODE=False no Railway)
 # =========================
 @auth_bp.route("/dev/verify/<email>", methods=["GET"])
 def dev_verify(email):
