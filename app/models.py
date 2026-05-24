@@ -30,17 +30,18 @@ class Company(db.Model):
     telefone            = db.Column(db.String(20),  nullable=True)
     token_focusnfe      = db.Column(db.String(100), nullable=True)
 
-    users           = db.relationship("User",          backref="company", lazy=True)
-    transactions    = db.relationship("Transaction",   backref="company", lazy=True)
-    bills           = db.relationship("Bill",          backref="company", lazy=True)
-    products        = db.relationship("Product",       backref="company", lazy=True)
-    quotes          = db.relationship("Quote",         backref="company", lazy=True)
-    clients         = db.relationship("Client",        backref="company", lazy=True)
-    orders          = db.relationship("Order",         backref="company", lazy=True)
-    stock_movements = db.relationship("StockMovement", backref="company", lazy=True)
-    service_records = db.relationship("ServiceRecord", backref="company", lazy=True)
-    brand_projects  = db.relationship("BrandProject",  backref="company", lazy=True)
-    brand_assets    = db.relationship("BrandAsset",    backref="company", lazy=True)
+    users            = db.relationship("User",            backref="company", lazy=True)
+    transactions     = db.relationship("Transaction",     backref="company", lazy=True)
+    bills            = db.relationship("Bill",            backref="company", lazy=True)
+    products         = db.relationship("Product",         backref="company", lazy=True)
+    quotes           = db.relationship("Quote",           backref="company", lazy=True)
+    clients          = db.relationship("Client",          backref="company", lazy=True)
+    orders           = db.relationship("Order",           backref="company", lazy=True)
+    stock_movements  = db.relationship("StockMovement",   backref="company", lazy=True)
+    service_records  = db.relationship("ServiceRecord",   backref="company", lazy=True)
+    brand_projects   = db.relationship("BrandProject",    backref="company", lazy=True)
+    brand_assets     = db.relationship("BrandAsset",      backref="company", lazy=True)
+    service_checkins = db.relationship("ServiceCheckin",  backref="company", lazy=True)  # ← NOVO
 
 
 class User(db.Model):
@@ -54,9 +55,9 @@ class User(db.Model):
     role         = db.Column(db.String(20),  nullable=False, default="admin")
     account_type = db.Column(db.String(20),  nullable=False, default="business")
 
-    email_verified           = db.Column(db.Boolean, default=False)
-    email_verification_token = db.Column(db.String(200), nullable=True)
-    reset_password_token     = db.Column(db.String(200), nullable=True)
+    email_verified           = db.Column(db.Boolean,      default=False)
+    email_verification_token = db.Column(db.String(200),  nullable=True)
+    reset_password_token     = db.Column(db.String(200),  nullable=True)
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_user_company"), nullable=True)
 
@@ -205,9 +206,10 @@ class Client(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_client_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_client_user"),    nullable=False)
 
-    orders          = db.relationship("Order",         backref="client", lazy=True)
-    service_records = db.relationship("ServiceRecord", backref="client", lazy=True)
-    quotes          = db.relationship("Quote",         backref="client", lazy=True)
+    orders          = db.relationship("Order",          backref="client", lazy=True)
+    service_records = db.relationship("ServiceRecord",  backref="client", lazy=True)
+    quotes          = db.relationship("Quote",          backref="client", lazy=True)
+    checkins        = db.relationship("ServiceCheckin", backref="client", lazy=True)  # ← NOVO
 
 
 class Order(db.Model):
@@ -336,8 +338,8 @@ class BrandProject(db.Model):
     format      = db.Column(db.String(30),  nullable=False, server_default="insta_post")
     created_at  = db.Column(db.String(20),  nullable=True)
 
-    company_id  = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_brandproj_company"), nullable=True)
-    user_id     = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_brandproj_user"),    nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_brandproj_company"), nullable=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_brandproj_user"),    nullable=False)
 
 
 class BrandAsset(db.Model):
@@ -350,3 +352,51 @@ class BrandAsset(db.Model):
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_brandasset_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_brandasset_user"),    nullable=False)
+
+
+# ─────────────────────────────────────────────────────────────
+# ServiceCheckin — Registro de execução via QR Code mestre
+# ─────────────────────────────────────────────────────────────
+class ServiceCheckin(db.Model):
+    """
+    Registro de execução de serviço via scan do QR Code mestre.
+
+    Cada vez que o colaborador escaneia o QR Code fixo na vitrine
+    do cliente, um ServiceCheckin é criado com data/hora e,
+    opcionalmente, coordenadas GPS.
+
+    O QR Code é MESTRE — sempre o mesmo para aquele cliente.
+    Não muda a cada visita. O registro de presença é feito aqui.
+    """
+    __tablename__ = "service_checkins"
+
+    id          = db.Column(db.Integer,   primary_key=True)
+    executed_at = db.Column(db.String(30), nullable=False)  # "2026-05-23T14:32:00"
+    latitude    = db.Column(db.Float,     nullable=True)
+    longitude   = db.Column(db.Float,     nullable=True)
+    notes       = db.Column(db.Text,      nullable=True)
+
+    client_id  = db.Column(db.Integer, db.ForeignKey("clients.id",   name="fk_checkin_client"),  nullable=False)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_checkin_user"),    nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_checkin_company"), nullable=False)
+
+    # Relacionamentos para acessar client.name e user.name
+    checkin_client = db.relationship("Client", foreign_keys=[client_id], lazy="joined")
+    checkin_user   = db.relationship("User",   foreign_keys=[user_id],   lazy="joined")
+
+    def to_dict(self) -> dict:
+        return {
+            "id":          self.id,
+            "executed_at": self.executed_at,
+            "latitude":    self.latitude,
+            "longitude":   self.longitude,
+            "notes":       self.notes,
+            "client_id":   self.client_id,
+            "client_name": self.checkin_client.name if self.checkin_client else "",
+            "user_id":     self.user_id,
+            "user_name":   self.checkin_user.name   if self.checkin_user   else "",
+            "company_id":  self.company_id,
+        }
+
+    def __repr__(self) -> str:
+        return f"ServiceCheckin(id={self.id}, client_id={self.client_id}, at='{self.executed_at}')"

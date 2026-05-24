@@ -26,6 +26,7 @@ from app.routes.dev_routes import dev_bp
 from app.routes.commission_routes import commission_bp
 from app.routes.nfe_routes import nfe_bp
 from app.routes.brand_routes import brand_bp
+from app.routes.checkin_routes import checkin_bp  # ← NOVO
 
 load_dotenv()
 
@@ -37,7 +38,7 @@ def create_app():
     app.config["JWT_SECRET_KEY"]                 = os.environ.get("JWT_SECRET_KEY")
     app.config["SQLALCHEMY_DATABASE_URI"]        = os.environ.get("DATABASE_URL")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    app.config["MAX_CONTENT_LENGTH"]             = 16 * 1024 * 1024  # 16MB para imagens
+    app.config["MAX_CONTENT_LENGTH"]             = 16 * 1024 * 1024  # 16MB
     app.config["JWT_ACCESS_TOKEN_EXPIRES"]       = timedelta(hours=8)
 
     CORS(
@@ -82,5 +83,6 @@ def create_app():
     app.register_blueprint(commission_bp,     url_prefix="/api")
     app.register_blueprint(nfe_bp,            url_prefix="/api")
     app.register_blueprint(brand_bp,          url_prefix="/api")
+    app.register_blueprint(checkin_bp,        url_prefix="/api")  # ← NOVO
 
     return app
