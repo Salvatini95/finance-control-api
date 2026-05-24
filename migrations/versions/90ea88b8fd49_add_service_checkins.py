@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = '90ea88b8fd49'
-down_revision = 'e48b4c9b4488'
+down_revision = 'add_brand_studio'
 branch_labels = None
 depends_on = None
 
