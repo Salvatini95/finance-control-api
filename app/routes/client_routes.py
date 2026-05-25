@@ -102,22 +102,36 @@ def _client_to_dict(c: Client, include_relations=False) -> dict:
     """Serializa Client para dict."""
     data = {
         "id":         c.id,
+        "codigo":     c.codigo,
         "name":       c.name,
         "email":      c.email,
         "phone":      c.phone,
         "document":   c.document,
+        "cnpj":       c.cnpj,
         "address":    c.address,
         "notes":      c.notes,
         "created_at": c.created_at,
+        # Endereço
         "cep":        c.cep,
         "logradouro": c.logradouro,
         "numero":     c.numero,
         "bairro":     c.bairro,
         "municipio":  c.municipio,
         "uf":         c.uf,
+        # GPS
         "latitude":   c.latitude,
         "longitude":  c.longitude,
         "tem_gps":    c.latitude is not None and c.longitude is not None,
+        # Contrato
+        "contrato_tipo":            c.contrato_tipo,
+        "contrato_valor":           c.contrato_valor,
+        "contrato_forma_pagamento": c.contrato_forma_pagamento,
+        "contrato_dia_pagamento":   c.contrato_dia_pagamento,
+        "contrato_inicio":          c.contrato_inicio,
+        "contrato_fim":             c.contrato_fim,
+        "contrato_status":          c.contrato_status,
+        "contrato_dias_semana":     c.contrato_dias_semana,
+        "contrato_observacoes":     c.contrato_observacoes,
     }
     if include_relations:
         data["quotes"] = [
@@ -171,24 +185,35 @@ def create_client():
 
     c = Client(
         name       = name,
+        codigo     = data.get("codigo",   "").strip() or None,
         email      = data.get("email",    "").strip() or None,
         phone      = data.get("phone",    "").strip() or None,
         document   = data.get("document", "").strip() or None,
+        cnpj       = data.get("cnpj",     "").strip() or None,
         address    = data.get("address",  "").strip() or None,
         notes      = data.get("notes",    "").strip() or None,
         created_at = str(date.today()),
         user_id    = user.id,
         company_id = user.company_id,
-        # Campos de endereço fiscal
+        # Endereço
         cep        = geo["cep"]        if geo else data.get("cep"),
         logradouro = geo["logradouro"] if geo else data.get("logradouro"),
         bairro     = geo["bairro"]     if geo else data.get("bairro"),
         municipio  = geo["municipio"]  if geo else data.get("municipio"),
         uf         = geo["uf"]         if geo else data.get("uf"),
         numero     = data.get("numero"),
-        # Coordenadas GPS (do Nominatim)
         latitude   = geo["lat"] if geo else None,
         longitude  = geo["lon"] if geo else None,
+        # Contrato
+        contrato_tipo            = data.get("contrato_tipo",            "avulso"),
+        contrato_valor           = data.get("contrato_valor"),
+        contrato_forma_pagamento = data.get("contrato_forma_pagamento"),
+        contrato_dia_pagamento   = data.get("contrato_dia_pagamento"),
+        contrato_inicio          = data.get("contrato_inicio"),
+        contrato_fim             = data.get("contrato_fim"),
+        contrato_status          = data.get("contrato_status",          "ativo"),
+        contrato_dias_semana     = data.get("contrato_dias_semana"),
+        contrato_observacoes     = data.get("contrato_observacoes"),
     )
     db.session.add(c)
     db.session.commit()
@@ -213,12 +238,24 @@ def update_client(client_id):
     data = request.get_json() or {}
 
     c.name     = data.get("name",     c.name).strip()
+    c.codigo   = data.get("codigo",   c.codigo)
     c.email    = data.get("email",    c.email)
     c.phone    = data.get("phone",    c.phone)
     c.document = data.get("document", c.document)
+    c.cnpj     = data.get("cnpj",     c.cnpj)
     c.address  = data.get("address",  c.address)
     c.notes    = data.get("notes",    c.notes)
     c.numero   = data.get("numero",   c.numero)
+    # Contrato
+    c.contrato_tipo            = data.get("contrato_tipo",            c.contrato_tipo)
+    c.contrato_valor           = data.get("contrato_valor",           c.contrato_valor)
+    c.contrato_forma_pagamento = data.get("contrato_forma_pagamento", c.contrato_forma_pagamento)
+    c.contrato_dia_pagamento   = data.get("contrato_dia_pagamento",   c.contrato_dia_pagamento)
+    c.contrato_inicio          = data.get("contrato_inicio",          c.contrato_inicio)
+    c.contrato_fim             = data.get("contrato_fim",             c.contrato_fim)
+    c.contrato_status          = data.get("contrato_status",          c.contrato_status)
+    c.contrato_dias_semana     = data.get("contrato_dias_semana",     c.contrato_dias_semana)
+    c.contrato_observacoes     = data.get("contrato_observacoes",     c.contrato_observacoes)
 
     # Re-geocodifica se CEP mudou
     novo_cep = data.get("cep", "")

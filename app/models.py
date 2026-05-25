@@ -203,9 +203,24 @@ class Client(db.Model):
     uf                 = db.Column(db.String(2),   nullable=True)
     codigo_municipio   = db.Column(db.String(10),  nullable=True)
 
+    # Código interno e fiscal
+    codigo             = db.Column(db.String(30),  nullable=True)
+    cnpj               = db.Column(db.String(30),  nullable=True)
+
     # Coordenadas GPS do endereço — usadas para validar check-in por geolocalização
     latitude  = db.Column(db.Float, nullable=True)
     longitude = db.Column(db.Float, nullable=True)
+
+    # Contrato
+    contrato_tipo             = db.Column(db.String(20),  nullable=True, server_default="avulso")
+    contrato_valor            = db.Column(db.Float(),     nullable=True)
+    contrato_forma_pagamento  = db.Column(db.String(30),  nullable=True)
+    contrato_dia_pagamento    = db.Column(db.Integer(),   nullable=True)
+    contrato_inicio           = db.Column(db.String(20),  nullable=True)
+    contrato_fim              = db.Column(db.String(20),  nullable=True)
+    contrato_status           = db.Column(db.String(20),  nullable=True, server_default="ativo")
+    contrato_dias_semana      = db.Column(db.String(50),  nullable=True)  # "1,3,5" = seg,qua,sex
+    contrato_observacoes      = db.Column(db.Text(),      nullable=True)
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_client_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_client_user"),    nullable=False)
