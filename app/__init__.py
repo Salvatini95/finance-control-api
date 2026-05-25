@@ -26,7 +26,7 @@ from app.routes.dev_routes import dev_bp
 from app.routes.commission_routes import commission_bp
 from app.routes.nfe_routes import nfe_bp
 from app.routes.brand_routes import brand_bp
-from app.routes.checkin_routes import checkin_bp  # ← NOVO
+from app.routes.checkin_routes import checkin_bp
 
 load_dotenv()
 
@@ -41,18 +41,11 @@ def create_app():
     app.config["MAX_CONTENT_LENGTH"]             = 16 * 1024 * 1024  # 16MB
     app.config["JWT_ACCESS_TOKEN_EXPIRES"]       = timedelta(hours=8)
 
+    # origins="*" — aceita qualquer origem (mobile, PWA, Vercel previews, etc.)
+    # supports_credentials=False quando origins="*" (limitação do CORS spec)
     CORS(
         app,
-        origins=[
-            "http://localhost:5173",
-            "http://localhost:5174",
-            "http://127.0.0.1:5173",
-            "https://finance-control-web-five.vercel.app",
-            "https://svfinance.com.br",
-            "https://www.svfinance.com.br",
-            "https://app.svfinance.com.br",
-        ],
-        supports_credentials=True,
+        origins="*",
         allow_headers=["Content-Type", "Authorization"],
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     )
@@ -83,6 +76,6 @@ def create_app():
     app.register_blueprint(commission_bp,     url_prefix="/api")
     app.register_blueprint(nfe_bp,            url_prefix="/api")
     app.register_blueprint(brand_bp,          url_prefix="/api")
-    app.register_blueprint(checkin_bp,        url_prefix="/api")  # ← NOVO
+    app.register_blueprint(checkin_bp,        url_prefix="/api")
 
     return app
