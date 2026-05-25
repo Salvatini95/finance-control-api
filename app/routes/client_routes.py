@@ -1,11 +1,19 @@
+# app/routes/client_routes.py
+"""
+Rotas de Clientes — apenas HTTP.
+Geocodificação CEP → lat/lon via ViaCEP + Nominatim (gratuito).
+"""
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.extensions import db
 from app.models import Client, User
 from datetime import date
+import requests as http
 
 client_bp = Blueprint("clients", __name__)
 
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_user(user_id):
     return User.query.get(int(user_id))
@@ -17,15 +25,82 @@ def _find_client(client_id, user):
     return Client.query.filter_by(id=client_id, user_id=user.id).first()
 
 
-@client_bp.route("/clients", methods=["GET"])
-@jwt_required()
-def get_clients():
-    user = _get_user(get_jwt_identity())
-    if user.company_id:
-        clients = Client.query.filter_by(company_id=user.company_id).order_by(Client.name).all()
-    else:
-        clients = Client.query.filter_by(user_id=user.id).order_by(Client.name).all()
-    return jsonify([{
+def _cep_para_coordenadas(cep: str) -> dict:
+    """
+    Converte CEP em lat/lon usando ViaCEP + Nominatim (OpenStreetMap).
+    Retorna dict com lat, lon, logradouro, bairro, municipio, uf.
+    Retorna None se não encontrar.
+    """
+    cep_limpo = "".join(filter(str.isdigit, cep or ""))
+    if len(cep_limpo) != 8:
+        return None
+
+    # 1. ViaCEP — busca endereço textual
+    try:
+        r = http.get(
+            f"https://viacep.com.br/ws/{cep_limpo}/json/",
+            timeout=5,
+            headers={"User-Agent": "SVFinance/1.0"}
+        )
+        viacep = r.json()
+        if viacep.get("erro"):
+            return None
+    except Exception:
+        return None
+
+    logradouro = viacep.get("logradouro", "")
+    bairro     = viacep.get("bairro",     "")
+    municipio  = viacep.get("localidade", "")
+    uf         = viacep.get("uf",         "")
+
+    # 2. Nominatim — converte endereço em coordenadas
+    try:
+        query = f"{logradouro}, {bairro}, {municipio}, {uf}, Brasil"
+        r2    = http.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": query, "format": "json", "limit": 1, "countrycodes": "br"},
+            timeout=8,
+            headers={"User-Agent": "SVFinance/1.0 (contato@svfinance.com.br)"}
+        )
+        resultados = r2.json()
+        if not resultados:
+            # Fallback: busca só pelo município
+            r3 = http.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": f"{municipio}, {uf}, Brasil", "format": "json", "limit": 1, "countrycodes": "br"},
+                timeout=8,
+                headers={"User-Agent": "SVFinance/1.0 (contato@svfinance.com.br)"}
+            )
+            resultados = r3.json()
+
+        if resultados:
+            return {
+                "lat":        float(resultados[0]["lat"]),
+                "lon":        float(resultados[0]["lon"]),
+                "logradouro": logradouro,
+                "bairro":     bairro,
+                "municipio":  municipio,
+                "uf":         uf,
+                "cep":        cep_limpo,
+            }
+    except Exception:
+        pass
+
+    # Retorna endereço sem coordenadas se Nominatim falhar
+    return {
+        "lat":        None,
+        "lon":        None,
+        "logradouro": logradouro,
+        "bairro":     bairro,
+        "municipio":  municipio,
+        "uf":         uf,
+        "cep":        cep_limpo,
+    }
+
+
+def _client_to_dict(c: Client, include_relations=False) -> dict:
+    """Serializa Client para dict."""
+    data = {
         "id":         c.id,
         "name":       c.name,
         "email":      c.email,
@@ -34,7 +109,41 @@ def get_clients():
         "address":    c.address,
         "notes":      c.notes,
         "created_at": c.created_at,
-    } for c in clients]), 200
+        "cep":        c.cep,
+        "logradouro": c.logradouro,
+        "numero":     c.numero,
+        "bairro":     c.bairro,
+        "municipio":  c.municipio,
+        "uf":         c.uf,
+        "latitude":   c.latitude,
+        "longitude":  c.longitude,
+        "tem_gps":    c.latitude is not None and c.longitude is not None,
+    }
+    if include_relations:
+        data["quotes"] = [
+            {"id": q.id, "number": q.number, "status": q.status,
+             "total": q.total, "created_at": q.created_at}
+            for q in c.quotes
+        ]
+        data["orders"] = [
+            {"id": o.id, "number": o.number, "status": o.status,
+             "total": o.total, "created_at": o.created_at}
+            for o in c.orders
+        ]
+    return data
+
+
+# ── Rotas ─────────────────────────────────────────────────────────────────────
+
+@client_bp.route("/clients", methods=["GET"])
+@jwt_required()
+def get_clients():
+    user = _get_user(get_jwt_identity())
+    if user.company_id:
+        clients = Client.query.filter_by(company_id=user.company_id).order_by(Client.name).all()
+    else:
+        clients = Client.query.filter_by(user_id=user.id).order_by(Client.name).all()
+    return jsonify([_client_to_dict(c) for c in clients]), 200
 
 
 @client_bp.route("/clients/<int:client_id>", methods=["GET"])
@@ -44,38 +153,23 @@ def get_client(client_id):
     c    = _find_client(client_id, user)
     if not c:
         return jsonify({"msg": "Cliente não encontrado"}), 404
-
-    quotes = [{"id": q.id, "number": q.number, "status": q.status, "total": q.total, "created_at": q.created_at} for q in c.quotes]
-    orders = [{"id": o.id, "number": o.number, "status": o.status, "total": o.total, "created_at": o.created_at} for o in c.orders]
-
-    return jsonify({
-        "id":         c.id,
-        "name":       c.name,
-        "email":      c.email,
-        "phone":      c.phone,
-        "document":   c.document,
-        "address":    c.address,
-        "notes":      c.notes,
-        "created_at": c.created_at,
-        "quotes":     quotes,
-        "orders":     orders,
-    }), 200
+    return jsonify(_client_to_dict(c, include_relations=True)), 200
 
 
 @client_bp.route("/clients", methods=["POST"])
 @jwt_required()
 def create_client():
     user = _get_user(get_jwt_identity())
-    data = request.get_json()
-
-    if not data:
-        return jsonify({"msg": "Nenhum dado enviado"}), 400
+    data = request.get_json() or {}
 
     name = data.get("name", "").strip()
     if not name:
         return jsonify({"msg": "Nome é obrigatório"}), 400
 
-    new_client = Client(
+    # Geocodificação automática pelo CEP
+    geo = _cep_para_coordenadas(data.get("cep", ""))
+
+    c = Client(
         name       = name,
         email      = data.get("email",    "").strip() or None,
         phone      = data.get("phone",    "").strip() or None,
@@ -85,10 +179,27 @@ def create_client():
         created_at = str(date.today()),
         user_id    = user.id,
         company_id = user.company_id,
+        # Campos de endereço fiscal
+        cep        = geo["cep"]        if geo else data.get("cep"),
+        logradouro = geo["logradouro"] if geo else data.get("logradouro"),
+        bairro     = geo["bairro"]     if geo else data.get("bairro"),
+        municipio  = geo["municipio"]  if geo else data.get("municipio"),
+        uf         = geo["uf"]         if geo else data.get("uf"),
+        numero     = data.get("numero"),
+        # Coordenadas GPS (do Nominatim)
+        latitude   = geo["lat"] if geo else None,
+        longitude  = geo["lon"] if geo else None,
     )
-    db.session.add(new_client)
+    db.session.add(c)
     db.session.commit()
-    return jsonify({"msg": "Cliente criado com sucesso", "id": new_client.id, "name": new_client.name}), 201
+
+    return jsonify({
+        "msg":      "Cliente criado com sucesso",
+        "id":       c.id,
+        "name":     c.name,
+        "tem_gps":  c.latitude is not None,
+        "geo_msg":  "📍 Localização salva automaticamente pelo CEP" if (geo and geo.get("lat")) else "⚠️ CEP não encontrado — localização não salva",
+    }), 201
 
 
 @client_bp.route("/clients/<int:client_id>", methods=["PUT"])
@@ -99,16 +210,36 @@ def update_client(client_id):
     if not c:
         return jsonify({"msg": "Cliente não encontrado"}), 404
 
-    data       = request.get_json()
+    data = request.get_json() or {}
+
     c.name     = data.get("name",     c.name).strip()
     c.email    = data.get("email",    c.email)
     c.phone    = data.get("phone",    c.phone)
     c.document = data.get("document", c.document)
     c.address  = data.get("address",  c.address)
     c.notes    = data.get("notes",    c.notes)
+    c.numero   = data.get("numero",   c.numero)
+
+    # Re-geocodifica se CEP mudou
+    novo_cep = data.get("cep", "")
+    if novo_cep and novo_cep != c.cep:
+        geo = _cep_para_coordenadas(novo_cep)
+        if geo:
+            c.cep        = geo["cep"]
+            c.logradouro = geo["logradouro"]
+            c.bairro     = geo["bairro"]
+            c.municipio  = geo["municipio"]
+            c.uf         = geo["uf"]
+            c.latitude   = geo["lat"]
+            c.longitude  = geo["lon"]
+            geo_msg = "📍 Localização atualizada pelo CEP" if geo.get("lat") else "⚠️ CEP não geocodificado"
+        else:
+            geo_msg = "⚠️ CEP inválido"
+    else:
+        geo_msg = None
 
     db.session.commit()
-    return jsonify({"msg": "Cliente atualizado com sucesso"}), 200
+    return jsonify({"msg": "Cliente atualizado com sucesso", "geo_msg": geo_msg}), 200
 
 
 @client_bp.route("/clients/<int:client_id>", methods=["DELETE"])
@@ -118,7 +249,33 @@ def delete_client(client_id):
     c    = _find_client(client_id, user)
     if not c:
         return jsonify({"msg": "Cliente não encontrado"}), 404
-
     db.session.delete(c)
     db.session.commit()
     return jsonify({"msg": "Cliente removido com sucesso"}), 200
+
+
+# ── Geocodificação manual (frontend pode chamar ao digitar o CEP) ─────────────
+@client_bp.route("/clients/geocode-cep", methods=["POST"])
+@jwt_required()
+def geocode_cep():
+    """
+    Endpoint auxiliar: recebe um CEP e retorna endereço + coordenadas.
+    Usado pelo frontend para preencher o formulário automaticamente.
+    """
+    data = request.get_json() or {}
+    cep  = data.get("cep", "")
+    geo  = _cep_para_coordenadas(cep)
+
+    if not geo:
+        return jsonify({"msg": "CEP não encontrado"}), 404
+
+    return jsonify({
+        "cep":        geo["cep"],
+        "logradouro": geo["logradouro"],
+        "bairro":     geo["bairro"],
+        "municipio":  geo["municipio"],
+        "uf":         geo["uf"],
+        "latitude":   geo["lat"],
+        "longitude":  geo["lon"],
+        "tem_gps":    geo["lat"] is not None,
+    }), 200

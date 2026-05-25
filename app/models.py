@@ -203,6 +203,10 @@ class Client(db.Model):
     uf                 = db.Column(db.String(2),   nullable=True)
     codigo_municipio   = db.Column(db.String(10),  nullable=True)
 
+    # Coordenadas GPS do endereço — usadas para validar check-in por geolocalização
+    latitude  = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
+
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_client_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_client_user"),    nullable=False)
 
