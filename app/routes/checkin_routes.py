@@ -1,177 +1,236 @@
 # app/routes/checkin_routes.py
-# ─────────────────────────────────────────────────────────────
-# Rotas HTTP para QR Code e Checkin de serviço.
-# Sem lógica de negócio aqui — tudo delega para QRCodeService.
-# ─────────────────────────────────────────────────────────────
-
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.services.qrcode_service import QRCodeService
-from app.models import User
+from app.extensions import db
+from app.models import User, Client, Order, ServiceCheckin
+from datetime import datetime, timezone
 
 checkin_bp = Blueprint("checkin", __name__)
 
 
-def _get_company_id(user_id: int) -> int:
-    """Retorna o company_id do usuário autenticado."""
-    user = User.query.get(user_id)
-    return user.company_id if user else None
+def _get_user(user_id):
+    return User.query.get(int(user_id))
+
+
+def _now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _diff_minutes(start_str, end_str):
+    try:
+        fmt   = "%Y-%m-%dT%H:%M:%S"
+        start = datetime.strptime(start_str, fmt)
+        end   = datetime.strptime(end_str,   fmt)
+        return max(0, int((end - start).total_seconds() / 60))
+    except Exception:
+        return None
+
+
+# ────────────────────────────────────────────────────────────
+# GET /api/checkin/open   ← DEVE VIR ANTES de /checkin/<int:id>
+# Verifica se o colaborador tem check-in em aberto
+# ────────────────────────────────────────────────────────────
+@checkin_bp.route("/checkin/open", methods=["GET"])
+@jwt_required()
+def get_open_checkin():
+    """Verifica se o colaborador tem check-in em aberto."""
+    user = _get_user(get_jwt_identity())
+
+    checkin = ServiceCheckin.query.filter_by(
+        user_id=user.id,
+        company_id=user.company_id,
+        type="checkin"
+    ).filter(ServiceCheckin.checkout_at == None).order_by(
+        ServiceCheckin.id.desc()
+    ).first()
+
+    if not checkin:
+        return jsonify({"open": False}), 200
+
+    client = Client.query.get(checkin.client_id)
+    order  = Order.query.get(checkin.order_id) if checkin.order_id else None
+
+    return jsonify({
+        "open":         True,
+        "checkin_id":   checkin.id,
+        "checkin_at":   checkin.checkin_at,
+        "client_name":  client.name if client else "",
+        "order_number": order.number if order else "",
+        "order_id":     checkin.order_id,
+    }), 200
 
 
 # ────────────────────────────────────────────────────────────
 # GET /api/clients/<id>/qrcode
-# Gera e retorna o QR Code mestre do cliente em base64.
-# Apenas admin pode gerar.
 # ────────────────────────────────────────────────────────────
 @checkin_bp.route("/clients/<int:client_id>/qrcode", methods=["GET"])
 @jwt_required()
-def get_client_qrcode(client_id: int):
-    """
-    Retorna o QR Code mestre do cliente.
+def get_client_qrcode(client_id):
+    user   = _get_user(get_jwt_identity())
+    client = Client.query.filter_by(id=client_id, company_id=user.company_id).first()
+    if not client:
+        return jsonify({"msg": "Cliente não encontrado"}), 404
 
-    O QR Code é gerado dinamicamente — sempre o mesmo para
-    aquele client_id. Não é armazenado no banco.
+    app_url     = "https://app.svfinance.com.br"
+    checkin_url = f"{app_url}/checkin/{client_id}?c={user.company_id}"
 
-    Response:
-        200: { qr_base64, checkin_url, client_id }
-        403: usuário sem permissão
-        400: erro na geração
-    """
-    user_id    = int(get_jwt_identity())
-    company_id = _get_company_id(user_id)
-
-    user = User.query.get(user_id)
-    if not user or user.role not in ("admin", "financial"):
-        return jsonify({"msg": "Apenas administradores podem gerar QR Codes"}), 403
-
-    try:
-        result = QRCodeService.generate_master_qr(client_id, company_id)
-        return jsonify(result), 200
-    except Exception as e:
-        return jsonify({"msg": f"Erro ao gerar QR Code: {str(e)}"}), 400
+    return jsonify({
+        "checkin_url": checkin_url,
+        "client_id":   client_id,
+        "client_name": client.name,
+    }), 200
 
 
 # ────────────────────────────────────────────────────────────
-# POST /api/checkin/<client_id>
-# Registra a execução do serviço via scan do QR Code.
-# Qualquer colaborador autenticado pode fazer checkin.
+# POST /api/checkin/<client_id>/start
 # ────────────────────────────────────────────────────────────
-@checkin_bp.route("/checkin/<int:client_id>", methods=["POST"])
+@checkin_bp.route("/checkin/<int:client_id>/start", methods=["POST"])
 @jwt_required()
-def register_checkin(client_id: int):
-    """
-    Registra checkin de serviço executado.
+def checkin_start(client_id):
+    user   = _get_user(get_jwt_identity())
+    data   = request.get_json() or {}
+    client = Client.query.filter_by(id=client_id, company_id=user.company_id).first()
+    if not client:
+        return jsonify({"msg": "Cliente não encontrado"}), 404
 
-    Chamado pelo PWA quando o colaborador confirma o serviço
-    após escanear o QR Code.
+    order_id = data.get("order_id")
+    if order_id:
+        order = Order.query.filter_by(id=order_id, company_id=user.company_id).first()
+        if not order:
+            return jsonify({"msg": "O.S não encontrada"}), 404
+        if order.status == "done":
+            return jsonify({"msg": "Esta O.S já foi concluída"}), 400
 
-    Body (JSON, todos opcionais):
-        lat   (float): latitude GPS
-        lon   (float): longitude GPS
-        notes (str):   observação do colaborador
+        existing = ServiceCheckin.query.filter_by(
+            order_id=order_id,
+            user_id=user.id,
+            type="checkin"
+        ).filter(ServiceCheckin.checkout_at == None).first()
 
-    Response:
-        201: dados do checkin criado
-        400: cliente não encontrado ou erro
-    """
-    user_id    = int(get_jwt_identity())
-    company_id = _get_company_id(user_id)
-    data       = request.get_json() or {}
+        if existing:
+            return jsonify({
+                "msg":        "Você já tem um check-in aberto para esta O.S",
+                "checkin_id": existing.id,
+                "checkin_at": existing.checkin_at,
+            }), 400
 
-    lat   = data.get("lat")
-    lon   = data.get("lon")
-    notes = data.get("notes", "").strip() or None
+        if order.status == "open":
+            order.status = "in_progress"
 
-    try:
-        result = QRCodeService.register_checkin(
-            client_id  = client_id,
-            user_id    = user_id,
-            company_id = company_id,
-            lat        = lat,
-            lon        = lon,
-            notes      = notes,
-        )
-        return jsonify(result), 201
-    except ValueError as e:
-        return jsonify({"msg": str(e)}), 400
-    except Exception as e:
-        return jsonify({"msg": f"Erro ao registrar checkin: {str(e)}"}), 500
+    now = _now()
+
+    checkin = ServiceCheckin(
+        client_id   =client_id,
+        user_id     =user.id,
+        company_id  =user.company_id,
+        order_id    =order_id,
+        executed_at =now,
+        checkin_at  =now,
+        checkout_at =None,
+        duration_min=None,
+        type        ="checkin",
+        latitude    =data.get("lat"),
+        longitude   =data.get("lon"),
+        notes       =data.get("notes", "").strip() or None,
+    )
+    db.session.add(checkin)
+    db.session.commit()
+
+    return jsonify({
+        "msg":         "✅ Check-in registrado!",
+        "checkin_id":  checkin.id,
+        "checkin_at":  checkin.checkin_at,
+        "client_name": client.name,
+        "order_id":    order_id,
+    }), 201
+
+
+# ────────────────────────────────────────────────────────────
+# POST /api/checkin/<checkin_id>/finish
+# ────────────────────────────────────────────────────────────
+@checkin_bp.route("/checkin/<int:checkin_id>/finish", methods=["POST"])
+@jwt_required()
+def checkin_finish(checkin_id):
+    user    = _get_user(get_jwt_identity())
+    data    = request.get_json() or {}
+    checkin = ServiceCheckin.query.filter_by(
+        id=checkin_id,
+        user_id=user.id,
+        company_id=user.company_id
+    ).first()
+
+    if not checkin:
+        return jsonify({"msg": "Check-in não encontrado"}), 404
+    if checkin.checkout_at:
+        return jsonify({"msg": "Este check-in já foi finalizado"}), 400
+
+    now      = _now()
+    duration = _diff_minutes(checkin.checkin_at, now)
+
+    checkin.checkout_at  = now
+    checkin.duration_min = duration
+    if data.get("notes"):
+        checkin.notes = data.get("notes")
+
+    db.session.commit()
+
+    h       = duration // 60 if duration else 0
+    m       = duration % 60  if duration else 0
+    dur_str = f"{h}h{m:02d}min" if h > 0 else f"{m}min"
+
+    return jsonify({
+        "msg":          f"✅ Check-out registrado! Duração: {dur_str}",
+        "checkin_id":   checkin.id,
+        "checkin_at":   checkin.checkin_at,
+        "checkout_at":  checkin.checkout_at,
+        "duration_min": duration,
+        "duration_str": dur_str,
+    }), 200
 
 
 # ────────────────────────────────────────────────────────────
 # GET /api/clients/<id>/checkins
-# Histórico de checkins de um cliente específico.
-# Admin e financial podem ver.
 # ────────────────────────────────────────────────────────────
 @checkin_bp.route("/clients/<int:client_id>/checkins", methods=["GET"])
 @jwt_required()
-def get_client_checkins(client_id: int):
-    """
-    Retorna o histórico de execuções de serviço de um cliente.
+def get_client_checkins(client_id):
+    user  = _get_user(get_jwt_identity())
+    limit = min(int(request.args.get("limit", 50)), 200)
 
-    Query params:
-        limit (int): máximo de registros, padrão 50
-
-    Response:
-        200: lista de checkins ordenados por data desc
-    """
-    user_id    = int(get_jwt_identity())
-    company_id = _get_company_id(user_id)
-    limit      = min(int(request.args.get("limit", 50)), 200)
-
-    user = User.query.get(user_id)
-    if not user or user.role not in ("admin", "financial", "seller"):
-        return jsonify({"msg": "Sem permissão"}), 403
-
-    try:
-        checkins = QRCodeService.get_client_history(client_id, company_id, limit)
-        return jsonify(checkins), 200
-    except Exception as e:
-        return jsonify({"msg": str(e)}), 400
+    checkins = (
+        ServiceCheckin.query
+        .filter_by(client_id=client_id, company_id=user.company_id)
+        .order_by(ServiceCheckin.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return jsonify([c.to_dict() for c in checkins]), 200
 
 
 # ────────────────────────────────────────────────────────────
-# GET /api/checkins
-# Todos os checkins da empresa — visão do ADM.
-# Suporta filtros de data e colaborador.
+# GET /api/checkins  (ADM)
 # ────────────────────────────────────────────────────────────
 @checkin_bp.route("/checkins", methods=["GET"])
 @jwt_required()
 def get_all_checkins():
-    """
-    Retorna checkins da empresa com filtros opcionais.
-    Usado pelo ADM para monitorar a operação do dia.
+    user = _get_user(get_jwt_identity())
 
-    Query params:
-        date_from (str): "YYYY-MM-DD"
-        date_to   (str): "YYYY-MM-DD"
-        user_id   (int): filtrar por colaborador
-        limit     (int): padrão 100
-
-    Response:
-        200: lista de checkins
-        403: sem permissão
-    """
-    user_id    = int(get_jwt_identity())
-    company_id = _get_company_id(user_id)
-
-    user = User.query.get(user_id)
-    if not user or user.role not in ("admin", "financial"):
-        return jsonify({"msg": "Apenas administradores podem ver todos os checkins"}), 403
+    if user.role not in ("admin", "financial"):
+        return jsonify({"msg": "Sem permissão"}), 403
 
     date_from      = request.args.get("date_from")
     date_to        = request.args.get("date_to")
     filter_user_id = request.args.get("user_id", type=int)
     limit          = min(int(request.args.get("limit", 100)), 500)
 
-    try:
-        checkins = QRCodeService.get_company_history(
-            company_id = company_id,
-            date_from  = date_from,
-            date_to    = date_to,
-            user_id    = filter_user_id,
-            limit      = limit,
-        )
-        return jsonify(checkins), 200
-    except Exception as e:
-        return jsonify({"msg": str(e)}), 500
+    query = ServiceCheckin.query.filter_by(company_id=user.company_id)
+
+    if filter_user_id:
+        query = query.filter_by(user_id=filter_user_id)
+    if date_from:
+        query = query.filter(ServiceCheckin.executed_at >= date_from)
+    if date_to:
+        query = query.filter(ServiceCheckin.executed_at <= f"{date_to}T23:59:59")
+
+    checkins = query.order_by(ServiceCheckin.id.desc()).limit(limit).all()
+    return jsonify([c.to_dict() for c in checkins]), 200

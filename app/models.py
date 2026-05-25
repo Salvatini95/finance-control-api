@@ -30,18 +30,18 @@ class Company(db.Model):
     telefone            = db.Column(db.String(20),  nullable=True)
     token_focusnfe      = db.Column(db.String(100), nullable=True)
 
-    users            = db.relationship("User",            backref="company", lazy=True)
-    transactions     = db.relationship("Transaction",     backref="company", lazy=True)
-    bills            = db.relationship("Bill",            backref="company", lazy=True)
-    products         = db.relationship("Product",         backref="company", lazy=True)
-    quotes           = db.relationship("Quote",           backref="company", lazy=True)
-    clients          = db.relationship("Client",          backref="company", lazy=True)
-    orders           = db.relationship("Order",           backref="company", lazy=True)
-    stock_movements  = db.relationship("StockMovement",   backref="company", lazy=True)
-    service_records  = db.relationship("ServiceRecord",   backref="company", lazy=True)
-    brand_projects   = db.relationship("BrandProject",    backref="company", lazy=True)
-    brand_assets     = db.relationship("BrandAsset",      backref="company", lazy=True)
-    service_checkins = db.relationship("ServiceCheckin",  backref="company", lazy=True)  # ← NOVO
+    users            = db.relationship("User",          backref="company", lazy=True)
+    transactions     = db.relationship("Transaction",   backref="company", lazy=True)
+    bills            = db.relationship("Bill",          backref="company", lazy=True)
+    products         = db.relationship("Product",       backref="company", lazy=True)
+    quotes           = db.relationship("Quote",         backref="company", lazy=True)
+    clients          = db.relationship("Client",        backref="company", lazy=True)
+    orders           = db.relationship("Order",         backref="company", lazy=True)
+    stock_movements  = db.relationship("StockMovement", backref="company", lazy=True)
+    service_records  = db.relationship("ServiceRecord", backref="company", lazy=True)
+    brand_projects   = db.relationship("BrandProject",  backref="company", lazy=True)
+    brand_assets     = db.relationship("BrandAsset",    backref="company", lazy=True)
+    service_checkins = db.relationship("ServiceCheckin", back_populates="company_rel", lazy=True)
 
 
 class User(db.Model):
@@ -55,9 +55,9 @@ class User(db.Model):
     role         = db.Column(db.String(20),  nullable=False, default="admin")
     account_type = db.Column(db.String(20),  nullable=False, default="business")
 
-    email_verified           = db.Column(db.Boolean,      default=False)
-    email_verification_token = db.Column(db.String(200),  nullable=True)
-    reset_password_token     = db.Column(db.String(200),  nullable=True)
+    email_verified           = db.Column(db.Boolean,     default=False)
+    email_verification_token = db.Column(db.String(200), nullable=True)
+    reset_password_token     = db.Column(db.String(200), nullable=True)
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_user_company"), nullable=True)
 
@@ -209,7 +209,12 @@ class Client(db.Model):
     orders          = db.relationship("Order",          backref="client", lazy=True)
     service_records = db.relationship("ServiceRecord",  backref="client", lazy=True)
     quotes          = db.relationship("Quote",          backref="client", lazy=True)
-    checkins        = db.relationship("ServiceCheckin", backref="client", lazy=True)  # ← NOVO
+    checkins        = db.relationship(
+        "ServiceCheckin",
+        back_populates="client_rel",
+        lazy=True,
+        foreign_keys="ServiceCheckin.client_id"
+    )
 
 
 class Order(db.Model):
@@ -354,49 +359,81 @@ class BrandAsset(db.Model):
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_brandasset_user"),    nullable=False)
 
 
-# ─────────────────────────────────────────────────────────────
-# ServiceCheckin — Registro de execução via QR Code mestre
-# ─────────────────────────────────────────────────────────────
 class ServiceCheckin(db.Model):
     """
-    Registro de execução de serviço via scan do QR Code mestre.
+    Registro de check-in e check-out de serviço via QR Code mestre.
 
-    Cada vez que o colaborador escaneia o QR Code fixo na vitrine
-    do cliente, um ServiceCheckin é criado com data/hora e,
-    opcionalmente, coordenadas GPS.
-
-    O QR Code é MESTRE — sempre o mesmo para aquele cliente.
-    Não muda a cada visita. O registro de presença é feito aqui.
+    FLUXO:
+    1. ADM cria OS para o cliente
+    2. Colaborador abre a OS no celular → toca "Iniciar serviço"
+    3. Câmera abre → escaneia QR Code fixo na vitrine
+    4. Sistema registra checkin_at + vincula à OS
+    5. OS muda para "em andamento" automaticamente
+    6. Colaborador executa o serviço
+    7. Toca "Finalizar serviço" → escaneia QR Code novamente
+    8. Sistema registra checkout_at e calcula duration_min
     """
     __tablename__ = "service_checkins"
 
-    id          = db.Column(db.Integer,   primary_key=True)
-    executed_at = db.Column(db.String(30), nullable=False)  # "2026-05-23T14:32:00"
-    latitude    = db.Column(db.Float,     nullable=True)
-    longitude   = db.Column(db.Float,     nullable=True)
-    notes       = db.Column(db.Text,      nullable=True)
+    id           = db.Column(db.Integer,    primary_key=True)
+    executed_at  = db.Column(db.String(30), nullable=False)
+    checkin_at   = db.Column(db.String(30), nullable=True)
+    checkout_at  = db.Column(db.String(30), nullable=True)
+    duration_min = db.Column(db.Integer,    nullable=True)
+    type         = db.Column(db.String(10), nullable=False, server_default="checkin")
+    latitude     = db.Column(db.Float,      nullable=True)
+    longitude    = db.Column(db.Float,      nullable=True)
+    notes        = db.Column(db.Text,       nullable=True)
 
     client_id  = db.Column(db.Integer, db.ForeignKey("clients.id",   name="fk_checkin_client"),  nullable=False)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_checkin_user"),    nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_checkin_company"), nullable=False)
+    order_id   = db.Column(db.Integer, db.ForeignKey("orders.id",    name="fk_checkin_order"),   nullable=True)
 
-    # Relacionamentos para acessar client.name e user.name
-    checkin_client = db.relationship("Client", foreign_keys=[client_id], lazy="joined")
-    checkin_user   = db.relationship("User",   foreign_keys=[user_id],   lazy="joined")
+    # ── Relacionamentos com back_populates para evitar conflito ──────────────
+    client_rel  = db.relationship(
+        "Client", back_populates="checkins",
+        foreign_keys=[client_id], lazy="joined"
+    )
+    user_rel    = db.relationship(
+        "User", foreign_keys=[user_id], lazy="joined"
+    )
+    order_rel   = db.relationship(
+        "Order", foreign_keys=[order_id], lazy="joined"
+    )
+    company_rel = db.relationship(
+        "Company", back_populates="service_checkins",
+        foreign_keys=[company_id], lazy="joined"
+    )
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
+        dur = self.duration_min
+        if dur is not None:
+            h       = dur // 60
+            m       = dur % 60
+            dur_str = f"{h}h{m:02d}min" if h > 0 else f"{m}min"
+        else:
+            dur_str = None
+
         return {
-            "id":          self.id,
-            "executed_at": self.executed_at,
-            "latitude":    self.latitude,
-            "longitude":   self.longitude,
-            "notes":       self.notes,
-            "client_id":   self.client_id,
-            "client_name": self.checkin_client.name if self.checkin_client else "",
-            "user_id":     self.user_id,
-            "user_name":   self.checkin_user.name   if self.checkin_user   else "",
-            "company_id":  self.company_id,
+            "id":           self.id,
+            "executed_at":  self.executed_at,
+            "checkin_at":   self.checkin_at,
+            "checkout_at":  self.checkout_at,
+            "duration_min": self.duration_min,
+            "duration_str": dur_str,
+            "type":         self.type,
+            "latitude":     self.latitude,
+            "longitude":    self.longitude,
+            "notes":        self.notes,
+            "client_id":    self.client_id,
+            "client_name":  self.client_rel.name  if self.client_rel else "",
+            "user_id":      self.user_id,
+            "user_name":    self.user_rel.name    if self.user_rel   else "",
+            "company_id":   self.company_id,
+            "order_id":     self.order_id,
+            "order_number": self.order_rel.number if self.order_rel  else "",
         }
 
-    def __repr__(self) -> str:
-        return f"ServiceCheckin(id={self.id}, client_id={self.client_id}, at='{self.executed_at}')"
+    def __repr__(self):
+        return f"ServiceCheckin(id={self.id}, client_id={self.client_id}, at='{self.checkin_at}')"
