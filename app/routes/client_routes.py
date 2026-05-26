@@ -291,6 +291,41 @@ def delete_client(client_id):
     return jsonify({"msg": "Cliente removido com sucesso"}), 200
 
 
+@client_bp.route("/clients/<int:client_id>/set-location", methods=["POST"])
+@jwt_required()
+def set_client_location(client_id: int):
+    """
+    Salva as coordenadas GPS exatas do cliente.
+    ADM vai ao local físico e clica 'Usar minha localização' —
+    isso salva o GPS real do celular, muito mais preciso que o CEP.
+    """
+    user = _get_user(get_jwt_identity())
+    if user.role not in ("admin", "financial"):
+        return jsonify({"msg": "Sem permissão"}), 403
+
+    c = _find_client(client_id, user)
+    if not c:
+        return jsonify({"msg": "Cliente não encontrado"}), 404
+
+    data = request.get_json() or {}
+    lat  = data.get("lat")
+    lon  = data.get("lon")
+
+    if lat is None or lon is None:
+        return jsonify({"msg": "Latitude e longitude são obrigatórios"}), 400
+
+    c.latitude  = float(lat)
+    c.longitude = float(lon)
+    db.session.commit()
+
+    return jsonify({
+        "msg":       "📍 Localização exata salva com sucesso!",
+        "latitude":  c.latitude,
+        "longitude": c.longitude,
+        "client_id": client_id,
+    }), 200
+
+
 # ── Geocodificação manual (frontend pode chamar ao digitar o CEP) ─────────────
 @client_bp.route("/clients/geocode-cep", methods=["POST"])
 @jwt_required()
