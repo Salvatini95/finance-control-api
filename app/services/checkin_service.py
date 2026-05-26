@@ -24,7 +24,7 @@ from app.models import Client, Order, ServiceCheckin, User
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 
-RAIO_MAXIMO_METROS  = 200   # distância máxima permitida do endereço do cliente
+RAIO_MAXIMO_METROS  = 500   # 500m — cobre imprecisão do CEP vs endereço real
 RAIO_ADMIN_METROS   = 5000  # admin tem raio maior para testes
 QR_CODE_UNIVERSAL   = "sv-checkin-universal"  # token fixo gravado no QR Code
 
