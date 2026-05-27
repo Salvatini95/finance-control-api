@@ -11,16 +11,16 @@ QR_CODE_UNIVERSAL  = "sv-checkin-universal"
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
-def _diff_minutes(start_str: str, end_str: str):
+def _diff_minutes(start_str, end_str):
     try:
         fmt   = "%Y-%m-%dT%H:%M:%S"
         start = datetime.strptime(start_str, fmt)
         end   = datetime.strptime(end_str,   fmt)
         return max(0, int((end - start).total_seconds() / 60))
-    except Exception:
+    except:
         return None
 
-def _haversine_metros(lat1, lon1, lat2, lon2) -> float:
+def _haversine_metros(lat1, lon1, lat2, lon2):
     R = 6_371_000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -32,63 +32,41 @@ def _haversine_metros(lat1, lon1, lat2, lon2) -> float:
 class CheckinService:
 
     @staticmethod
-    def validar_qr_universal(token: str) -> bool:
+    def validar_qr_universal(token):
         return token.strip() == QR_CODE_UNIVERSAL
 
     @staticmethod
-    def validar_geolocalizacao(client: Client, lat, lon, is_admin=False) -> dict:
-        """
-        Valida GPS do colaborador vs coordenadas do cliente.
-        Se cliente não tem coordenadas → LIBERA com aviso (não bloqueia).
-        Se colaborador não tem GPS → LIBERA com aviso (não bloqueia).
-        Só BLOQUEIA se tiver coordenadas dos dois lados E distância > raio.
-        """
-        # Sem coordenadas no cliente → libera sem GPS
+    def validar_geolocalizacao(client, lat, lon, is_admin=False):
         if not client.latitude or not client.longitude:
             return {
                 "ok": True,
                 "distancia_metros": None,
-                "msg": "⚠️ Cliente sem localização cadastrada — check-in liberado. Configure a localização do cliente para ativar validação GPS.",
+                "msg": "⚠️ Cliente sem localização cadastrada — check-in liberado.",
                 "sem_coordenadas": True,
             }
-
-        # Sem GPS do colaborador → libera com aviso
         if lat is None or lon is None:
             return {
                 "ok": True,
                 "distancia_metros": None,
-                "msg": "⚠️ GPS não disponível — check-in registrado sem validação de localização.",
+                "msg": "⚠️ GPS não disponível — check-in registrado sem validação.",
                 "sem_gps": True,
             }
-
         distancia = _haversine_metros(lat, lon, client.latitude, client.longitude)
         raio = RAIO_ADMIN_METROS if is_admin else RAIO_MAXIMO_METROS
-
         if distancia <= raio:
-            return {
-                "ok": True,
-                "distancia_metros": round(distancia),
-                "msg": f"📍 Localização confirmada ({round(distancia)}m do cliente).",
-            }
-        else:
-            return {
-                "ok": False,
-                "distancia_metros": round(distancia),
-                "msg": f"❌ Você está a {round(distancia)}m do cliente (máximo permitido: {raio}m). Vá até o local e tente novamente.",
-            }
+            return {"ok": True, "distancia_metros": round(distancia), "msg": f"📍 Localização confirmada ({round(distancia)}m)."}
+        return {"ok": False, "distancia_metros": round(distancia),
+                "msg": f"❌ Você está a {round(distancia)}m do cliente. Máximo permitido: {raio}m. Vá até o local e tente novamente."}
 
     @staticmethod
-    def registrar_entrada(user, client_id, order_id, lat, lon, notes, qr_token) -> dict:
-        # 1. QR Code
+    def registrar_entrada(user, client_id, order_id, lat, lon, notes, qr_token):
         if qr_token and not CheckinService.validar_qr_universal(qr_token):
-            return {"ok": False, "msg": "QR Code inválido. Use o adesivo oficial SV Finance.", "code": 400}
+            return {"ok": False, "msg": "QR Code inválido.", "code": 400}
 
-        # 2. Cliente
         client = Client.query.filter_by(id=client_id, company_id=user.company_id).first()
         if not client:
             return {"ok": False, "msg": "Cliente não encontrado.", "code": 404}
 
-        # 3. OS
         order = None
         if order_id:
             order = Order.query.filter_by(id=order_id, company_id=user.company_id).first()
@@ -99,25 +77,17 @@ class CheckinService:
             if order.client_id != client_id:
                 return {"ok": False, "msg": "Esta O.S não pertence a este cliente.", "code": 400}
 
-            # 4. Duplicata
             existing = ServiceCheckin.query.filter_by(
                 order_id=order_id, user_id=user.id, type="checkin"
             ).filter(ServiceCheckin.checkout_at == None).first()
             if existing:
-                return {
-                    "ok": False,
-                    "msg": "Você já tem um check-in aberto para esta O.S.",
-                    "checkin_id": existing.id,
-                    "checkin_at": existing.checkin_at,
-                    "code": 400,
-                }
+                return {"ok": False, "msg": "Você já tem um check-in aberto para esta O.S.",
+                        "checkin_id": existing.id, "checkin_at": existing.checkin_at, "code": 400}
 
-        # 5. GPS — bloqueia só se estiver fora E tiver coordenadas cadastradas
         geo = CheckinService.validar_geolocalizacao(client, lat, lon, is_admin=user.is_admin)
         if not geo["ok"]:
             return {"ok": False, "msg": geo["msg"], "distancia_metros": geo.get("distancia_metros"), "code": 400}
 
-        # Muda OS para em andamento
         if order and order.status == "open":
             order.status = "in_progress"
 
@@ -133,24 +103,18 @@ class CheckinService:
         db.session.commit()
 
         return {
-            "ok": True,
-            "msg": "✅ Check-in registrado!",
-            "checkin_id": checkin.id,
-            "checkin_at": checkin.checkin_at,
-            "client_name": client.name,
-            "order_id": order_id,
+            "ok": True, "msg": "✅ Check-in registrado!",
+            "checkin_id": checkin.id, "checkin_at": checkin.checkin_at,
+            "client_name": client.name, "order_id": order_id,
             "distancia_metros": geo.get("distancia_metros"),
-            "geo_msg": geo["msg"],
-            "code": 201,
+            "geo_msg": geo["msg"], "code": 201,
         }
 
     @staticmethod
-    def registrar_saida(user, checkin_id, lat, lon, notes, qr_token) -> dict:
-        # 1. QR Code
+    def registrar_saida(user, checkin_id, lat, lon, notes, qr_token):
         if qr_token and not CheckinService.validar_qr_universal(qr_token):
-            return {"ok": False, "msg": "QR Code inválido. Use o adesivo oficial SV Finance.", "code": 400}
+            return {"ok": False, "msg": "QR Code inválido.", "code": 400}
 
-        # 2. Check-in
         checkin = ServiceCheckin.query.filter_by(
             id=checkin_id, user_id=user.id, company_id=user.company_id
         ).first()
@@ -159,7 +123,6 @@ class CheckinService:
         if checkin.checkout_at:
             return {"ok": False, "msg": "Este check-in já foi finalizado.", "code": 400}
 
-        # 3. GPS — mesmo comportamento: libera se sem coordenadas
         client = Client.query.get(checkin.client_id)
         if client:
             geo = CheckinService.validar_geolocalizacao(client, lat, lon, is_admin=user.is_admin)
@@ -174,6 +137,15 @@ class CheckinService:
         checkin.duration_min = duration
         if notes:
             checkin.notes = notes.strip()
+
+        # ✅ Muda OS para "done" ao finalizar o check-out
+        if checkin.order_id:
+            order = Order.query.get(checkin.order_id)
+            if order and order.status == "in_progress":
+                order.status     = "done"
+                from datetime import date
+                order.finished_at = str(date.today())
+
         db.session.commit()
 
         h   = duration // 60 if duration else 0
@@ -181,31 +153,28 @@ class CheckinService:
         dur_str = f"{h}h{m:02d}min" if h > 0 else f"{m}min"
 
         return {
-            "ok": True,
-            "msg": f"✅ Check-out registrado! Duração: {dur_str}",
+            "ok": True, "msg": f"✅ Serviço concluído! Duração: {dur_str}",
             "checkin_id": checkin.id,
             "checkin_at": checkin.checkin_at,
             "checkout_at": checkin.checkout_at,
             "duration_min": duration,
             "duration_str": dur_str,
             "distancia_metros": geo.get("distancia_metros"),
+            "order_status": "done",
             "code": 200,
         }
 
     @staticmethod
-    def buscar_checkin_aberto(user) -> dict:
+    def buscar_checkin_aberto(user):
         checkin = ServiceCheckin.query.filter_by(
             user_id=user.id, company_id=user.company_id, type="checkin"
         ).filter(ServiceCheckin.checkout_at == None).order_by(
             ServiceCheckin.id.desc()
         ).first()
-
         if not checkin:
             return {"open": False}
-
         client = Client.query.get(checkin.client_id)
         order  = Order.query.get(checkin.order_id) if checkin.order_id else None
-
         return {
             "open": True,
             "checkin_id": checkin.id,
@@ -217,5 +186,13 @@ class CheckinService:
         }
 
     @staticmethod
-    def gerar_url_qr_universal() -> str:
+    def gerar_url_qr_universal():
         return QR_CODE_UNIVERSAL
+
+    @staticmethod
+    def buscar_checkins_da_os(order_id, company_id):
+        """Retorna todos os checkins de uma OS específica."""
+        checkins = ServiceCheckin.query.filter_by(
+            order_id=order_id, company_id=company_id, type="checkin"
+        ).order_by(ServiceCheckin.id.desc()).all()
+        return [c.to_dict() for c in checkins]
