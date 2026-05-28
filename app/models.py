@@ -80,6 +80,9 @@ class User(db.Model):
     def can_finance(self): return self.role in ["admin", "financial"]
     @property
     def can_stock(self):   return self.role in ["admin", "stock"]
+    # NOVO: encarregado pode gerar PIN e supervisionar
+    @property
+    def can_manage_field(self): return self.role in ["admin", "encarregado"]
 
 
 class Transaction(db.Model):
@@ -234,6 +237,12 @@ class Client(db.Model):
         lazy=True,
         foreign_keys="ServiceCheckin.client_id"
     )
+
+    @property
+    def endereco_completo(self):
+        """Endereço legível para relatórios — usado no to_dict do check-in."""
+        partes = [self.logradouro, self.numero, self.bairro, self.municipio, self.uf]
+        return ", ".join([p for p in partes if p]) or (self.address or "—")
 
 
 class Order(db.Model):
@@ -391,6 +400,8 @@ class ServiceCheckin(db.Model):
     6. Colaborador executa o serviço
     7. Toca "Finalizar serviço" → escaneia QR Code novamente
     8. Sistema registra checkout_at e calcula duration_min
+
+    OFFLINE: local_id (UUID do celular) garante idempotência no sync em lote.
     """
     __tablename__ = "service_checkins"
 
@@ -403,6 +414,10 @@ class ServiceCheckin(db.Model):
     latitude     = db.Column(db.Float,      nullable=True)
     longitude    = db.Column(db.Float,      nullable=True)
     notes        = db.Column(db.Text,       nullable=True)
+
+    # ── NOVO: idempotência offline ──────────────────────────────────────────
+    local_id       = db.Column(db.String(40), nullable=True)
+    synced_offline = db.Column(db.Boolean,    nullable=False, server_default="false")
 
     client_id  = db.Column(db.Integer, db.ForeignKey("clients.id",   name="fk_checkin_client"),  nullable=False)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_checkin_user"),    nullable=False)
@@ -434,25 +449,69 @@ class ServiceCheckin(db.Model):
         else:
             dur_str = None
 
+        # Endereço legível do cadastro do cliente (relatório com endereço)
+        client_address = self.client_rel.endereco_completo if self.client_rel else "—"
+
         return {
-            "id":           self.id,
-            "executed_at":  self.executed_at,
-            "checkin_at":   self.checkin_at,
-            "checkout_at":  self.checkout_at,
-            "duration_min": self.duration_min,
-            "duration_str": dur_str,
-            "type":         self.type,
-            "latitude":     self.latitude,
-            "longitude":    self.longitude,
-            "notes":        self.notes,
-            "client_id":    self.client_id,
-            "client_name":  self.client_rel.name  if self.client_rel else "",
-            "user_id":      self.user_id,
-            "user_name":    self.user_rel.name    if self.user_rel   else "",
-            "company_id":   self.company_id,
-            "order_id":     self.order_id,
-            "order_number": self.order_rel.number if self.order_rel  else "",
+            "id":             self.id,
+            "executed_at":    self.executed_at,
+            "checkin_at":     self.checkin_at,
+            "checkout_at":    self.checkout_at,
+            "duration_min":   self.duration_min,
+            "duration_str":   dur_str,
+            "type":           self.type,
+            "latitude":       self.latitude,
+            "longitude":      self.longitude,
+            "notes":          self.notes,
+            "local_id":       self.local_id,
+            "synced_offline": self.synced_offline,
+            "client_id":      self.client_id,
+            "client_name":    self.client_rel.name  if self.client_rel else "",
+            "client_address": client_address,
+            "user_id":        self.user_id,
+            "user_name":      self.user_rel.name    if self.user_rel   else "",
+            "company_id":     self.company_id,
+            "order_id":       self.order_id,
+            "order_number":   self.order_rel.number if self.order_rel  else "",
         }
 
     def __repr__(self):
         return f"ServiceCheckin(id={self.id}, client_id={self.client_id}, at='{self.checkin_at}')"
+
+
+class CheckinPin(db.Model):
+    """
+    PIN temporário para liberar check-in de cliente SEM GPS cadastrado.
+
+    Gerado por admin ou encarregado, 6 dígitos, validade curta (5min),
+    uso único. Ao ser usado, libera o check-in E salva o GPS do
+    colaborador como localização oficial do cliente.
+    """
+    __tablename__ = "checkin_pins"
+
+    id          = db.Column(db.Integer, primary_key=True)
+    pin         = db.Column(db.String(6),  nullable=False)
+    client_id   = db.Column(db.Integer, db.ForeignKey("clients.id",   name="fk_pin_client"),  nullable=False)
+    company_id  = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_pin_company"), nullable=False)
+    created_by  = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_pin_creator"), nullable=False)
+    used_by     = db.Column(db.Integer, nullable=True)
+    created_at  = db.Column(db.String(20), nullable=False)
+    expires_at  = db.Column(db.String(20), nullable=False)
+    used_at     = db.Column(db.String(20), nullable=True)
+    status      = db.Column(db.String(20), nullable=False, server_default="ativo")  # ativo|usado|expirado
+
+    def to_dict(self) -> dict:
+        return {
+            "id":         self.id,
+            "pin":        self.pin,
+            "client_id":  self.client_id,
+            "created_by": self.created_by,
+            "used_by":    self.used_by,
+            "created_at": self.created_at,
+            "expires_at": self.expires_at,
+            "used_at":    self.used_at,
+            "status":     self.status,
+        }
+
+    def __repr__(self) -> str:
+        return f"CheckinPin(id={self.id}, client_id={self.client_id}, status='{self.status}')"

@@ -1,12 +1,15 @@
 # app/services/checkin_service.py
 import math
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timezone, date
 from app.extensions import db
 from app.models import Client, Order, ServiceCheckin, User
+from app.services.pin_service import PinService
 
 RAIO_MAXIMO_METROS = 300
 RAIO_ADMIN_METROS  = 10000
 QR_CODE_UNIVERSAL  = "sv-checkin-universal"
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
@@ -17,7 +20,7 @@ def _diff_minutes(start_str, end_str):
         start = datetime.strptime(start_str, fmt)
         end   = datetime.strptime(end_str,   fmt)
         return max(0, int((end - start).total_seconds() / 60))
-    except:
+    except Exception:
         return None
 
 def _haversine_metros(lat1, lon1, lat2, lon2):
@@ -33,34 +36,32 @@ class CheckinService:
 
     @staticmethod
     def validar_qr_universal(token):
-        return token.strip() == QR_CODE_UNIVERSAL
+        return str(token).strip() == QR_CODE_UNIVERSAL
 
     @staticmethod
     def validar_geolocalizacao(client, lat, lon, is_admin=False):
         """
-        Valida se o colaborador está no local do cliente.
+        Valida presença por GPS.
 
-        Regras:
-        - Cliente sem coordenadas → libera com aviso
-        - Colaborador sem GPS    → libera com aviso
-        - Dentro do raio         → ok, msg genérica (sem distância visível ao colaborador)
-        - Fora do raio           → bloqueia, msg genérica (sem distância nem raio revelados)
+        - Cliente SEM coordenadas → BLOQUEIA (precisa de PIN do encarregado).
+        - Colaborador sem GPS      → BLOQUEIA (não dá pra registrar local).
+        - Dentro do raio           → ok, msg genérica.
+        - Fora do raio             → bloqueia, msg genérica (sem distância/raio).
 
-        distancia_metros é retornada no dict para uso interno/ADM,
-        mas nunca deve aparecer na mensagem exibida ao colaborador.
+        distancia_metros vai no dict para o ADM, nunca na msg do colaborador.
         """
         if not client.latitude or not client.longitude:
             return {
-                "ok": True,
+                "ok": False,
                 "distancia_metros": None,
-                "msg": "⚠️ Cliente sem localização cadastrada — check-in liberado.",
+                "msg": "Este cliente não tem localização cadastrada. Solicite um PIN ao seu encarregado.",
                 "sem_coordenadas": True,
             }
         if lat is None or lon is None:
             return {
-                "ok": True,
+                "ok": False,
                 "distancia_metros": None,
-                "msg": "⚠️ GPS não disponível — check-in registrado sem validação.",
+                "msg": "GPS não disponível. Ative a localização e tente novamente.",
                 "sem_gps": True,
             }
 
@@ -68,11 +69,7 @@ class CheckinService:
         raio      = RAIO_ADMIN_METROS if is_admin else RAIO_MAXIMO_METROS
 
         if distancia <= raio:
-            return {
-                "ok": True,
-                "distancia_metros": round(distancia),
-                "msg": "📍 Localização confirmada.",
-            }
+            return {"ok": True, "distancia_metros": round(distancia), "msg": "📍 Localização confirmada."}
 
         return {
             "ok": False,
@@ -81,9 +78,28 @@ class CheckinService:
         }
 
     @staticmethod
-    def registrar_entrada(user, client_id, order_id, lat, lon, notes, qr_token):
+    def registrar_entrada(user, client_id, order_id, lat, lon, notes, qr_token,
+                          pin=None, local_id=None, synced_offline=False):
+        """
+        Registra entrada (check-in).
+
+        Se o cliente não tem GPS e um PIN válido for fornecido:
+          → libera o check-in
+          → salva o GPS do colaborador como localização oficial do cliente
+          → consome o PIN
+
+        local_id: UUID gerado no celular (idempotência offline).
+        """
         if qr_token and not CheckinService.validar_qr_universal(qr_token):
             return {"ok": False, "msg": "QR Code inválido.", "code": 400}
+
+        # Idempotência: se já existe esse local_id, retorna sucesso sem duplicar
+        if local_id:
+            dup = ServiceCheckin.query.filter_by(local_id=local_id, company_id=user.company_id).first()
+            if dup:
+                return {"ok": True, "msg": "Check-in já registrado.", "checkin_id": dup.id,
+                        "checkin_at": dup.checkin_at, "client_name": "", "order_id": dup.order_id,
+                        "duplicate": True, "code": 200}
 
         client = Client.query.filter_by(id=client_id, company_id=user.company_id).first()
         if not client:
@@ -106,9 +122,25 @@ class CheckinService:
                 return {"ok": False, "msg": "Você já tem um check-in aberto para esta O.S.",
                         "checkin_id": existing.id, "checkin_at": existing.checkin_at, "code": 400}
 
-        geo = CheckinService.validar_geolocalizacao(client, lat, lon, is_admin=user.is_admin)
-        if not geo["ok"]:
-            return {"ok": False, "msg": geo["msg"], "distancia_metros": geo.get("distancia_metros"), "code": 400}
+        # ── Fluxo PIN: cliente sem GPS + PIN fornecido ──────────────────────────
+        pin_id = None
+        if pin and (not client.latitude or not client.longitude):
+            valida = PinService.validar(user, client_id, pin)
+            if not valida["ok"]:
+                return {"ok": False, "msg": valida["msg"], "code": valida["code"]}
+            pin_id = valida["pin_id"]
+            # Salva o GPS do colaborador como localização oficial do cliente
+            if lat is not None and lon is not None:
+                client.latitude  = lat
+                client.longitude = lon
+        else:
+            # Validação normal de GPS
+            geo = CheckinService.validar_geolocalizacao(client, lat, lon, is_admin=user.is_admin)
+            if not geo["ok"]:
+                return {"ok": False, "msg": geo["msg"],
+                        "distancia_metros": geo.get("distancia_metros"),
+                        "sem_coordenadas": geo.get("sem_coordenadas", False),
+                        "code": 400}
 
         if order and order.status == "open":
             order.status = "in_progress"
@@ -120,20 +152,28 @@ class CheckinService:
             checkout_at=None, duration_min=None, type="checkin",
             latitude=lat, longitude=lon,
             notes=notes.strip() if notes else None,
+            local_id=local_id or str(uuid.uuid4()),
+            synced_offline=bool(synced_offline),
         )
         db.session.add(checkin)
         db.session.commit()
+
+        # Consome o PIN só após o check-in existir
+        if pin_id:
+            PinService.consumir(pin_id, user)
 
         return {
             "ok": True, "msg": "✅ Check-in registrado!",
             "checkin_id": checkin.id, "checkin_at": checkin.checkin_at,
             "client_name": client.name, "order_id": order_id,
-            "distancia_metros": geo.get("distancia_metros"),
-            "geo_msg": geo["msg"], "code": 201,
+            "local_id": checkin.local_id,
+            "geo_msg": "📍 Localização confirmada.", "code": 201,
         }
 
     @staticmethod
-    def registrar_saida(user, checkin_id, lat, lon, notes, qr_token):
+    def registrar_saida(user, checkin_id, lat, lon, notes, qr_token,
+                        pin=None, local_id=None, synced_offline=False):
+        """Registra saída (check-out). Mesma lógica de PIN/idempotência da entrada."""
         if qr_token and not CheckinService.validar_qr_universal(qr_token):
             return {"ok": False, "msg": "QR Code inválido.", "code": 400}
 
@@ -146,12 +186,22 @@ class CheckinService:
             return {"ok": False, "msg": "Este check-in já foi finalizado.", "code": 400}
 
         client = Client.query.get(checkin.client_id)
+        pin_id = None
         if client:
-            geo = CheckinService.validar_geolocalizacao(client, lat, lon, is_admin=user.is_admin)
-            if not geo["ok"]:
-                return {"ok": False, "msg": geo["msg"], "distancia_metros": geo.get("distancia_metros"), "code": 400}
-        else:
-            geo = {"msg": "GPS não validado.", "distancia_metros": None}
+            if pin and (not client.latitude or not client.longitude):
+                valida = PinService.validar(user, client.id, pin)
+                if not valida["ok"]:
+                    return {"ok": False, "msg": valida["msg"], "code": valida["code"]}
+                pin_id = valida["pin_id"]
+                if lat is not None and lon is not None:
+                    client.latitude  = lat
+                    client.longitude = lon
+            else:
+                geo = CheckinService.validar_geolocalizacao(client, lat, lon, is_admin=user.is_admin)
+                if not geo["ok"]:
+                    return {"ok": False, "msg": geo["msg"],
+                            "distancia_metros": geo.get("distancia_metros"),
+                            "sem_coordenadas": geo.get("sem_coordenadas", False), "code": 400}
 
         now      = _now()
         duration = _diff_minutes(checkin.checkin_at, now)
@@ -160,15 +210,15 @@ class CheckinService:
         if notes:
             checkin.notes = notes.strip()
 
-        # ✅ Muda OS para "done" ao finalizar o check-out
         if checkin.order_id:
             order = Order.query.get(checkin.order_id)
             if order and order.status == "in_progress":
                 order.status      = "done"
-                from datetime import date
                 order.finished_at = str(date.today())
 
         db.session.commit()
+        if pin_id:
+            PinService.consumir(pin_id, user)
 
         h       = duration // 60 if duration else 0
         m       = duration % 60  if duration else 0
@@ -176,15 +226,50 @@ class CheckinService:
 
         return {
             "ok": True, "msg": f"✅ Serviço concluído! Duração: {dur_str}",
-            "checkin_id": checkin.id,
-            "checkin_at": checkin.checkin_at,
-            "checkout_at": checkin.checkout_at,
-            "duration_min": duration,
-            "duration_str": dur_str,
-            "distancia_metros": geo.get("distancia_metros"),
-            "order_status": "done",
-            "code": 200,
+            "checkin_id": checkin.id, "checkin_at": checkin.checkin_at,
+            "checkout_at": checkin.checkout_at, "duration_min": duration,
+            "duration_str": dur_str, "order_status": "done", "code": 200,
         }
+
+    @staticmethod
+    def sincronizar_lote(user, eventos: list) -> dict:
+        """
+        Sincroniza uma fila de check-ins feitos offline.
+
+        Cada evento: {
+          "local_id": "uuid", "kind": "start"|"finish",
+          "client_id": int, "order_id": int|null, "checkin_id": int|null,
+          "lat": float, "lon": float, "notes": str, "pin": str|null
+        }
+
+        Idempotência por local_id: eventos já processados são ignorados.
+
+        Returns:
+            dict com 'ok', 'results' (lista de {local_id, ok, msg}) e 'code'
+        """
+        results = []
+        for ev in eventos:
+            lid = ev.get("local_id")
+            try:
+                if ev.get("kind") == "start":
+                    r = CheckinService.registrar_entrada(
+                        user=user, client_id=ev.get("client_id"), order_id=ev.get("order_id"),
+                        lat=ev.get("lat"), lon=ev.get("lon"), notes=ev.get("notes"),
+                        qr_token=QR_CODE_UNIVERSAL, pin=ev.get("pin"),
+                        local_id=lid, synced_offline=True,
+                    )
+                else:  # finish
+                    r = CheckinService.registrar_saida(
+                        user=user, checkin_id=ev.get("checkin_id"),
+                        lat=ev.get("lat"), lon=ev.get("lon"), notes=ev.get("notes"),
+                        qr_token=QR_CODE_UNIVERSAL, pin=ev.get("pin"),
+                        local_id=lid, synced_offline=True,
+                    )
+                results.append({"local_id": lid, "ok": r.get("ok", False), "msg": r.get("msg", "")})
+            except Exception as e:
+                results.append({"local_id": lid, "ok": False, "msg": f"Erro: {e}"})
+
+        return {"ok": True, "results": results, "code": 200}
 
     @staticmethod
     def buscar_checkin_aberto(user):
@@ -198,13 +283,9 @@ class CheckinService:
         client = Client.query.get(checkin.client_id)
         order  = Order.query.get(checkin.order_id) if checkin.order_id else None
         return {
-            "open": True,
-            "checkin_id": checkin.id,
-            "checkin_at": checkin.checkin_at,
-            "client_id": checkin.client_id,
-            "client_name": client.name if client else "",
-            "order_number": order.number if order else "",
-            "order_id": checkin.order_id,
+            "open": True, "checkin_id": checkin.id, "checkin_at": checkin.checkin_at,
+            "client_id": checkin.client_id, "client_name": client.name if client else "",
+            "order_number": order.number if order else "", "order_id": checkin.order_id,
         }
 
     @staticmethod

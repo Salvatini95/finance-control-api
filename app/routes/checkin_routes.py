@@ -2,7 +2,8 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import User, Client, ServiceCheckin
-from app.services.checkin_service import CheckinService
+from app.services.checkin_service import CheckinService, RAIO_MAXIMO_METROS
+from app.services.pin_service import PinService
 
 checkin_bp = Blueprint("checkin", __name__)
 
@@ -37,6 +38,7 @@ def checkin_start(client_id):
         order_id=data.get("order_id"),
         lat=data.get("lat"), lon=data.get("lon"),
         notes=data.get("notes"), qr_token=data.get("qr_token"),
+        pin=data.get("pin"), local_id=data.get("local_id"),
     )
     code = result.pop("code", 200)
     return jsonify(result), code
@@ -51,8 +53,39 @@ def checkin_finish(checkin_id):
         user=user, checkin_id=checkin_id,
         lat=data.get("lat"), lon=data.get("lon"),
         notes=data.get("notes"), qr_token=data.get("qr_token"),
+        pin=data.get("pin"), local_id=data.get("local_id"),
     )
     code = result.pop("code", 200)
+    return jsonify(result), code
+
+# ── POST /api/checkin/pin/generate (admin/encarregado) ───────────────────────
+@checkin_bp.route("/checkin/pin/generate", methods=["POST"])
+@jwt_required()
+def gerar_pin():
+    user   = _get_user(get_jwt_identity())
+    data   = request.get_json() or {}
+    result = PinService.gerar(user=user, client_id=data.get("client_id"))
+    code   = result.pop("code", 200)
+    return jsonify(result), code
+
+# ── GET /api/checkin/pin/active (admin/encarregado) ──────────────────────────
+@checkin_bp.route("/checkin/pin/active", methods=["GET"])
+@jwt_required()
+def listar_pins_ativos():
+    user   = _get_user(get_jwt_identity())
+    result = PinService.listar_ativos(user=user)
+    code   = result.pop("code", 200)
+    return jsonify(result), code
+
+# ── POST /api/checkin/sync (offline em lote) ─────────────────────────────────
+@checkin_bp.route("/checkin/sync", methods=["POST"])
+@jwt_required()
+def sincronizar():
+    user    = _get_user(get_jwt_identity())
+    data    = request.get_json() or {}
+    eventos = data.get("eventos", [])
+    result  = CheckinService.sincronizar_lote(user=user, eventos=eventos)
+    code    = result.pop("code", 200)
     return jsonify(result), code
 
 # ── GET /api/orders/<order_id>/checkins ──────────────────────────────────────
@@ -76,7 +109,7 @@ def get_client_qrcode(client_id):
         "qr_token":    CheckinService.gerar_url_qr_universal(),
         "client_id":   client_id,
         "client_name": client.name,
-        "raio_metros": RAIO_MAXIMO_METROS if hasattr(CheckinService, 'RAIO_MAXIMO_METROS') else 300,
+        "raio_metros": RAIO_MAXIMO_METROS,
     }), 200
 
 # ── GET /api/clients/<id>/checkins ───────────────────────────────────────────
@@ -98,7 +131,7 @@ def get_client_checkins(client_id):
 @jwt_required()
 def get_all_checkins():
     user = _get_user(get_jwt_identity())
-    if user.role not in ("admin", "financial"):
+    if user.role not in ("admin", "financial", "encarregado"):
         return jsonify({"msg": "Sem permissão"}), 403
     date_from      = request.args.get("date_from")
     date_to        = request.args.get("date_to")
