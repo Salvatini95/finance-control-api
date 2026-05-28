@@ -37,6 +37,18 @@ class CheckinService:
 
     @staticmethod
     def validar_geolocalizacao(client, lat, lon, is_admin=False):
+        """
+        Valida se o colaborador está no local do cliente.
+
+        Regras:
+        - Cliente sem coordenadas → libera com aviso
+        - Colaborador sem GPS    → libera com aviso
+        - Dentro do raio         → ok, msg genérica (sem distância visível ao colaborador)
+        - Fora do raio           → bloqueia, msg genérica (sem distância nem raio revelados)
+
+        distancia_metros é retornada no dict para uso interno/ADM,
+        mas nunca deve aparecer na mensagem exibida ao colaborador.
+        """
         if not client.latitude or not client.longitude:
             return {
                 "ok": True,
@@ -51,12 +63,22 @@ class CheckinService:
                 "msg": "⚠️ GPS não disponível — check-in registrado sem validação.",
                 "sem_gps": True,
             }
+
         distancia = _haversine_metros(lat, lon, client.latitude, client.longitude)
-        raio = RAIO_ADMIN_METROS if is_admin else RAIO_MAXIMO_METROS
+        raio      = RAIO_ADMIN_METROS if is_admin else RAIO_MAXIMO_METROS
+
         if distancia <= raio:
-            return {"ok": True, "distancia_metros": round(distancia), "msg": f"📍 Localização confirmada ({round(distancia)}m)."}
-        return {"ok": False, "distancia_metros": round(distancia),
-                "msg": f"❌ Você está a {round(distancia)}m do cliente. Máximo permitido: {raio}m. Vá até o local e tente novamente."}
+            return {
+                "ok": True,
+                "distancia_metros": round(distancia),
+                "msg": "📍 Localização confirmada.",
+            }
+
+        return {
+            "ok": False,
+            "distancia_metros": round(distancia),
+            "msg": "❌ Você não está no local do cliente. Aproxime-se e tente novamente.",
+        }
 
     @staticmethod
     def registrar_entrada(user, client_id, order_id, lat, lon, notes, qr_token):
@@ -142,14 +164,14 @@ class CheckinService:
         if checkin.order_id:
             order = Order.query.get(checkin.order_id)
             if order and order.status == "in_progress":
-                order.status     = "done"
+                order.status      = "done"
                 from datetime import date
                 order.finished_at = str(date.today())
 
         db.session.commit()
 
-        h   = duration // 60 if duration else 0
-        m   = duration % 60  if duration else 0
+        h       = duration // 60 if duration else 0
+        m       = duration % 60  if duration else 0
         dur_str = f"{h}h{m:02d}min" if h > 0 else f"{m}min"
 
         return {
