@@ -3,13 +3,16 @@ from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identi
 from app.extensions import db
 from app.models import User, Company
 from app.email_service import send_verification_email, send_password_reset_email
-from datetime import date
+from datetime import date, timedelta
 import secrets, os
 
 auth_bp = Blueprint("auth", __name__)
 
 DEV_MODE = os.environ.get("DEV_MODE", "True").lower() not in ("false", "0", "no")
 APP_URL  = os.environ.get("APP_URL", "https://svfinance.com.br")
+
+# Validade do token de acesso (login persistente no PWA)
+JWT_EXPIRES = timedelta(days=30)
 
 VALID_NICHOS = {
     "generic", "contador", "barbeiro", "mototaxi",
@@ -322,7 +325,8 @@ def login():
             "email":            email,
         }), 403
 
-    token = create_access_token(identity=str(user.id))
+    # Token com validade de 30 dias → login persistente no PWA
+    token = create_access_token(identity=str(user.id), expires_delta=JWT_EXPIRES)
 
     return jsonify({
         "token":        token,
