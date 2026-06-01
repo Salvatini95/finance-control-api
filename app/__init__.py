@@ -27,6 +27,7 @@ from app.routes.commission_routes import commission_bp
 from app.routes.nfe_routes import nfe_bp
 from app.routes.brand_routes import brand_bp
 from app.routes.checkin_routes import checkin_bp
+from app.routes.limpeza_routes import limpeza_bp
 
 load_dotenv()
 
@@ -41,8 +42,6 @@ def create_app():
     app.config["MAX_CONTENT_LENGTH"]             = 16 * 1024 * 1024  # 16MB
     app.config["JWT_ACCESS_TOKEN_EXPIRES"]       = timedelta(hours=8)
 
-    # origins="*" — aceita qualquer origem (mobile, PWA, Vercel previews, etc.)
-    # supports_credentials=False quando origins="*" (limitação do CORS spec)
     CORS(
         app,
         origins="*",
@@ -77,5 +76,6 @@ def create_app():
     app.register_blueprint(nfe_bp,            url_prefix="/api")
     app.register_blueprint(brand_bp,          url_prefix="/api")
     app.register_blueprint(checkin_bp,        url_prefix="/api")
+    app.register_blueprint(limpeza_bp)
 
     return app

@@ -1,6 +1,7 @@
 from app.extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date
+from sqlalchemy.dialects.postgresql import JSON as PGJSON
 
 
 class Company(db.Model):
@@ -80,7 +81,6 @@ class User(db.Model):
     def can_finance(self): return self.role in ["admin", "financial"]
     @property
     def can_stock(self):   return self.role in ["admin", "stock"]
-    # NOVO: encarregado pode gerar PIN e supervisionar
     @property
     def can_manage_field(self): return self.role in ["admin", "encarregado"]
 
@@ -206,15 +206,12 @@ class Client(db.Model):
     uf                 = db.Column(db.String(2),   nullable=True)
     codigo_municipio   = db.Column(db.String(10),  nullable=True)
 
-    # Código interno e fiscal
     codigo             = db.Column(db.String(30),  nullable=True)
     cnpj               = db.Column(db.String(30),  nullable=True)
 
-    # Coordenadas GPS do endereço — usadas para validar check-in por geolocalização
     latitude  = db.Column(db.Float, nullable=True)
     longitude = db.Column(db.Float, nullable=True)
 
-    # Contrato
     contrato_tipo             = db.Column(db.String(20),  nullable=True, server_default="avulso")
     contrato_valor            = db.Column(db.Float(),     nullable=True)
     contrato_forma_pagamento  = db.Column(db.String(30),  nullable=True)
@@ -222,7 +219,7 @@ class Client(db.Model):
     contrato_inicio           = db.Column(db.String(20),  nullable=True)
     contrato_fim              = db.Column(db.String(20),  nullable=True)
     contrato_status           = db.Column(db.String(20),  nullable=True, server_default="ativo")
-    contrato_dias_semana      = db.Column(db.String(50),  nullable=True)  # "1,3,5" = seg,qua,sex
+    contrato_dias_semana      = db.Column(db.String(50),  nullable=True)
     contrato_observacoes      = db.Column(db.Text(),      nullable=True)
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_client_company"), nullable=True)
@@ -240,7 +237,6 @@ class Client(db.Model):
 
     @property
     def endereco_completo(self):
-        """Endereço legível para relatórios — usado no to_dict do check-in."""
         partes = [self.logradouro, self.numero, self.bairro, self.municipio, self.uf]
         return ", ".join([p for p in partes if p]) or (self.address or "—")
 
@@ -415,7 +411,6 @@ class ServiceCheckin(db.Model):
     longitude    = db.Column(db.Float,      nullable=True)
     notes        = db.Column(db.Text,       nullable=True)
 
-    # ── NOVO: idempotência offline ──────────────────────────────────────────
     local_id       = db.Column(db.String(40), nullable=True)
     synced_offline = db.Column(db.Boolean,    nullable=False, server_default="false")
 
@@ -424,7 +419,6 @@ class ServiceCheckin(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_checkin_company"), nullable=False)
     order_id   = db.Column(db.Integer, db.ForeignKey("orders.id",    name="fk_checkin_order"),   nullable=True)
 
-    # ── Relacionamentos com back_populates para evitar conflito ──────────────
     client_rel  = db.relationship(
         "Client", back_populates="checkins",
         foreign_keys=[client_id], lazy="joined"
@@ -449,7 +443,6 @@ class ServiceCheckin(db.Model):
         else:
             dur_str = None
 
-        # Endereço legível do cadastro do cliente (relatório com endereço)
         client_address = self.client_rel.endereco_completo if self.client_rel else "—"
 
         return {
@@ -498,7 +491,7 @@ class CheckinPin(db.Model):
     created_at  = db.Column(db.String(20), nullable=False)
     expires_at  = db.Column(db.String(20), nullable=False)
     used_at     = db.Column(db.String(20), nullable=True)
-    status      = db.Column(db.String(20), nullable=False, server_default="ativo")  # ativo|usado|expirado
+    status      = db.Column(db.String(20), nullable=False, server_default="ativo")
 
     def to_dict(self) -> dict:
         return {
@@ -515,3 +508,78 @@ class CheckinPin(db.Model):
 
     def __repr__(self) -> str:
         return f"CheckinPin(id={self.id}, client_id={self.client_id}, status='{self.status}')"
+
+
+# ── RESTAURA GLASS — Modelos isolados (nicho limpeza, company_id=17) ──────────
+# Não afetam nenhum outro nicho ou empresa do SV Finance.
+
+class LimpezaServiceCard(db.Model):
+    """
+    Cartão de visita recorrente da Restaura Glass.
+    Um cartão por O.S — registra frequência, dia fixo, mês/ano e execução por semana.
+    """
+    __tablename__ = "limpeza_service_cards"
+
+    id           = db.Column(db.Integer,     primary_key=True)
+    company_id   = db.Column(db.Integer,     nullable=False, index=True)
+    order_id     = db.Column(db.Integer,     nullable=False, unique=True, index=True)
+    client_id    = db.Column(db.Integer,     nullable=False, server_default="0")
+    frequencia   = db.Column(db.String(20),  nullable=False, server_default="semanal")
+    mes          = db.Column(db.Integer,     nullable=False, server_default="1")
+    ano          = db.Column(db.Integer,     nullable=False, server_default="2024")
+    dias_semana  = db.Column(db.String(3),   nullable=False, server_default="seg")
+    obs_contrato = db.Column(db.String(255), nullable=True)
+    semanas      = db.Column(PGJSON,         nullable=False, server_default="[]")
+    created_at   = db.Column(db.DateTime,    nullable=False, server_default=db.func.now())
+    updated_at   = db.Column(db.DateTime,    nullable=False, server_default=db.func.now(), onupdate=db.func.now())
+
+    def to_dict(self):
+        return {
+            "id":           self.id,
+            "company_id":   self.company_id,
+            "order_id":     self.order_id,
+            "client_id":    self.client_id,
+            "frequencia":   self.frequencia,
+            "mes":          self.mes,
+            "ano":          self.ano,
+            "dias_semana":  self.dias_semana,
+            "obs_contrato": self.obs_contrato,
+            "semanas":      self.semanas or [],
+            "created_at":   self.created_at.isoformat() if self.created_at else None,
+            "updated_at":   self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class LimpezaOccurrence(db.Model):
+    """
+    Registro das 4 ocorrências de desfecho de visita da Restaura Glass:
+    fechou / remarcou / nao_compareceu / mudou_ponto
+    """
+    __tablename__ = "limpeza_occurrences"
+
+    id                 = db.Column(db.Integer,    primary_key=True)
+    company_id         = db.Column(db.Integer,    nullable=False, index=True)
+    order_id           = db.Column(db.Integer,    nullable=False, index=True)
+    user_id            = db.Column(db.Integer,    nullable=True)
+    tipo               = db.Column(db.String(30), nullable=False, server_default="")
+    data               = db.Column(db.String(10), nullable=False, server_default="")
+    hora               = db.Column(db.String(5),  nullable=True)
+    reagendamento_data = db.Column(db.String(10), nullable=True)
+    reagendamento_hora = db.Column(db.String(5),  nullable=True)
+    descricao          = db.Column(db.Text,        nullable=True)
+    created_at         = db.Column(db.DateTime,    nullable=False, server_default=db.func.now())
+
+    def to_dict(self):
+        return {
+            "id":                 self.id,
+            "company_id":         self.company_id,
+            "order_id":           self.order_id,
+            "user_id":            self.user_id,
+            "tipo":               self.tipo,
+            "data":               self.data,
+            "hora":               self.hora,
+            "reagendamento_data": self.reagendamento_data,
+            "reagendamento_hora": self.reagendamento_hora,
+            "descricao":          self.descricao,
+            "created_at":         self.created_at.isoformat() if self.created_at else None,
+        }
