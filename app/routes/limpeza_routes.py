@@ -1,54 +1,92 @@
-# ── MODELOS RESTAURA GLASS (isolados, não afetam outros nichos) ──────────────
+from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.extensions import db
+from app.models import LimpezaServiceCard, LimpezaOccurrence, Order
+from datetime import datetime
 
-from sqlalchemy.dialects.postgresql import JSON as PGJSON
-
-class LimpezaServiceCard(db.Model):
-    __tablename__ = "limpeza_service_cards"
-
-    id           = db.Column(db.Integer, primary_key=True)
-    company_id   = db.Column(db.Integer, nullable=False, index=True)
-    order_id     = db.Column(db.Integer, nullable=False, unique=True, index=True)
-    client_id    = db.Column(db.Integer, nullable=False, server_default="0")
-    frequencia   = db.Column(db.String(20), nullable=False, server_default="semanal")
-    mes          = db.Column(db.Integer, nullable=False, server_default="1")
-    ano          = db.Column(db.Integer, nullable=False, server_default="2024")
-    dias_semana  = db.Column(db.String(3), nullable=False, server_default="seg")
-    obs_contrato = db.Column(db.String(255), nullable=True)
-    semanas      = db.Column(PGJSON, nullable=False, server_default="[]")
-    created_at   = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
-    updated_at   = db.Column(db.DateTime, nullable=False, server_default=db.func.now(), onupdate=db.func.now())
-
-    def to_dict(self):
-        return {
-            "id": self.id, "company_id": self.company_id, "order_id": self.order_id,
-            "client_id": self.client_id, "frequencia": self.frequencia, "mes": self.mes,
-            "ano": self.ano, "dias_semana": self.dias_semana, "obs_contrato": self.obs_contrato,
-            "semanas": self.semanas or [],
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-        }
+limpeza_bp = Blueprint("limpeza", __name__, url_prefix="/api/limpeza")
 
 
-class LimpezaOccurrence(db.Model):
-    __tablename__ = "limpeza_occurrences"
+def _company_id():
+    identity = get_jwt_identity()
+    return identity.get("company_id") if isinstance(identity, dict) else None
 
-    id                 = db.Column(db.Integer, primary_key=True)
-    company_id         = db.Column(db.Integer, nullable=False, index=True)
-    order_id           = db.Column(db.Integer, nullable=False, index=True)
-    user_id            = db.Column(db.Integer, nullable=True)
-    tipo               = db.Column(db.String(30), nullable=False, server_default="")
-    data               = db.Column(db.String(10), nullable=False, server_default="")
-    hora               = db.Column(db.String(5), nullable=True)
-    reagendamento_data = db.Column(db.String(10), nullable=True)
-    reagendamento_hora = db.Column(db.String(5), nullable=True)
-    descricao          = db.Column(db.Text, nullable=True)
-    created_at         = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
 
-    def to_dict(self):
-        return {
-            "id": self.id, "company_id": self.company_id, "order_id": self.order_id,
-            "user_id": self.user_id, "tipo": self.tipo, "data": self.data, "hora": self.hora,
-            "reagendamento_data": self.reagendamento_data, "reagendamento_hora": self.reagendamento_hora,
-            "descricao": self.descricao,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
+@limpeza_bp.route("/card/<int:order_id>", methods=["GET"])
+@jwt_required()
+def obter_cartao(order_id):
+    cid = _company_id()
+    order = Order.query.filter_by(id=order_id, company_id=cid).first()
+    if not order:
+        return jsonify({"erro": "O.S não encontrada"}), 404
+    card = LimpezaServiceCard.query.filter_by(order_id=order_id).first()
+    if not card:
+        card = LimpezaServiceCard(
+            company_id=cid,
+            order_id=order_id,
+            client_id=order.client_id,
+            mes=datetime.now().month,
+            ano=datetime.now().year,
+        )
+        db.session.add(card)
+        db.session.commit()
+    occs = LimpezaOccurrence.query.filter_by(order_id=order_id).order_by(LimpezaOccurrence.created_at.desc()).all()
+    return jsonify({"card": card.to_dict(), "ocorrencias": [o.to_dict() for o in occs]}), 200
+
+
+@limpeza_bp.route("/card/<int:order_id>", methods=["PUT"])
+@jwt_required()
+def atualizar_cartao(order_id):
+    cid = _company_id()
+    order = Order.query.filter_by(id=order_id, company_id=cid).first()
+    if not order:
+        return jsonify({"erro": "O.S não encontrada"}), 404
+    data = (request.get_json() or {}).get("card", {})
+    card = LimpezaServiceCard.query.filter_by(order_id=order_id).first()
+    if not card:
+        card = LimpezaServiceCard(company_id=cid, order_id=order_id, client_id=order.client_id)
+        db.session.add(card)
+    for campo in ["frequencia", "mes", "ano", "dias_semana", "obs_contrato", "semanas"]:
+        if campo in data:
+            setattr(card, campo, data[campo])
+    db.session.commit()
+    return jsonify({"mensagem": "Salvo", "card": card.to_dict()}), 200
+
+
+@limpeza_bp.route("/occurrence", methods=["POST"])
+@jwt_required()
+def registrar_ocorrencia():
+    cid = _company_id()
+    data = request.get_json() or {}
+    order = Order.query.filter_by(id=data.get("order_id"), company_id=cid).first()
+    if not order:
+        return jsonify({"erro": "O.S não encontrada"}), 404
+    occ = LimpezaOccurrence(
+        company_id=cid,
+        order_id=data["order_id"],
+        tipo=data.get("tipo", ""),
+        data=data.get("data", ""),
+        hora=data.get("hora"),
+        descricao=data.get("descricao", ""),
+        reagendamento_data=data.get("reagendamento_data"),
+        reagendamento_hora=data.get("reagendamento_hora"),
+    )
+    db.session.add(occ)
+    db.session.commit()
+    return jsonify({"mensagem": "Registrado", "ocorrencia": occ.to_dict()}), 201
+
+
+@limpeza_bp.route("/occurrences/<int:order_id>", methods=["GET"])
+@jwt_required()
+def listar_ocorrencias(order_id):
+    cid = _company_id()
+    order = Order.query.filter_by(id=order_id, company_id=cid).first()
+    if not order:
+        return jsonify({"erro": "O.S não encontrada"}), 404
+    occs = LimpezaOccurrence.query.filter_by(order_id=order_id).order_by(LimpezaOccurrence.created_at.desc()).all()
+    return jsonify({"ocorrencias": [o.to_dict() for o in occs]}), 200
+
+
+@limpeza_bp.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"}), 200
