@@ -74,13 +74,13 @@ class User(db.Model):
         return check_password_hash(self.password, raw_password)
 
     @property
-    def is_admin(self):    return self.role == "admin"
+    def is_admin(self):         return self.role == "admin"
     @property
-    def can_sell(self):    return self.role in ["admin", "seller"]
+    def can_sell(self):         return self.role in ["admin", "seller"]
     @property
-    def can_finance(self): return self.role in ["admin", "financial"]
+    def can_finance(self):      return self.role in ["admin", "financial"]
     @property
-    def can_stock(self):   return self.role in ["admin", "stock"]
+    def can_stock(self):        return self.role in ["admin", "stock"]
     @property
     def can_manage_field(self): return self.role in ["admin", "encarregado"]
 
@@ -212,22 +212,22 @@ class Client(db.Model):
     latitude  = db.Column(db.Float, nullable=True)
     longitude = db.Column(db.Float, nullable=True)
 
-    contrato_tipo             = db.Column(db.String(20),  nullable=True, server_default="avulso")
-    contrato_valor            = db.Column(db.Float(),     nullable=True)
-    contrato_forma_pagamento  = db.Column(db.String(30),  nullable=True)
-    contrato_dia_pagamento    = db.Column(db.Integer(),   nullable=True)
-    contrato_inicio           = db.Column(db.String(20),  nullable=True)
-    contrato_fim              = db.Column(db.String(20),  nullable=True)
-    contrato_status           = db.Column(db.String(20),  nullable=True, server_default="ativo")
-    contrato_dias_semana      = db.Column(db.String(50),  nullable=True)
-    contrato_observacoes      = db.Column(db.Text(),      nullable=True)
+    contrato_tipo            = db.Column(db.String(20),  nullable=True, server_default="avulso")
+    contrato_valor           = db.Column(db.Float(),     nullable=True)
+    contrato_forma_pagamento = db.Column(db.String(30),  nullable=True)
+    contrato_dia_pagamento   = db.Column(db.Integer(),   nullable=True)
+    contrato_inicio          = db.Column(db.String(20),  nullable=True)
+    contrato_fim             = db.Column(db.String(20),  nullable=True)
+    contrato_status          = db.Column(db.String(20),  nullable=True, server_default="ativo")
+    contrato_dias_semana     = db.Column(db.String(50),  nullable=True)
+    contrato_observacoes     = db.Column(db.Text(),      nullable=True)
 
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_client_company"), nullable=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_client_user"),    nullable=False)
 
-    orders          = db.relationship("Order",          backref="client", lazy=True)
-    service_records = db.relationship("ServiceRecord",  backref="client", lazy=True)
-    quotes          = db.relationship("Quote",          backref="client", lazy=True)
+    orders          = db.relationship("Order",         backref="client", lazy=True)
+    service_records = db.relationship("ServiceRecord", backref="client", lazy=True)
+    quotes          = db.relationship("Quote",         backref="client", lazy=True)
     checkins        = db.relationship(
         "ServiceCheckin",
         back_populates="client_rel",
@@ -257,9 +257,10 @@ class Order(db.Model):
     created_at    = db.Column(db.String(20),  nullable=True)
     finished_at   = db.Column(db.String(20),  nullable=True)
 
-    nfe_chave  = db.Column(db.String(50), nullable=True)
-    nfe_status = db.Column(db.String(20), nullable=True)
-    nfe_numero = db.Column(db.String(10), nullable=True)
+    nfe_chave  = db.Column(db.String(50),  nullable=True)
+    nfe_status = db.Column(db.String(20),  nullable=True)
+    nfe_numero = db.Column(db.String(10),  nullable=True)
+    nfe_ref    = db.Column(db.String(64),  nullable=True)  # referência Focus NF-e
 
     company_id     = db.Column(db.Integer, db.ForeignKey("companies.id",    name="fk_order_company"),     nullable=True)
     client_id      = db.Column(db.Integer, db.ForeignKey("clients.id",      name="fk_order_client"),      nullable=False)
@@ -482,16 +483,16 @@ class CheckinPin(db.Model):
     """
     __tablename__ = "checkin_pins"
 
-    id          = db.Column(db.Integer, primary_key=True)
-    pin         = db.Column(db.String(6),  nullable=False)
-    client_id   = db.Column(db.Integer, db.ForeignKey("clients.id",   name="fk_pin_client"),  nullable=False)
-    company_id  = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_pin_company"), nullable=False)
-    created_by  = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_pin_creator"), nullable=False)
-    used_by     = db.Column(db.Integer, nullable=True)
-    created_at  = db.Column(db.String(20), nullable=False)
-    expires_at  = db.Column(db.String(20), nullable=False)
-    used_at     = db.Column(db.String(20), nullable=True)
-    status      = db.Column(db.String(20), nullable=False, server_default="ativo")
+    id         = db.Column(db.Integer,    primary_key=True)
+    pin        = db.Column(db.String(6),  nullable=False)
+    client_id  = db.Column(db.Integer,   db.ForeignKey("clients.id",   name="fk_pin_client"),  nullable=False)
+    company_id = db.Column(db.Integer,   db.ForeignKey("companies.id", name="fk_pin_company"), nullable=False)
+    created_by = db.Column(db.Integer,   db.ForeignKey("users.id",     name="fk_pin_creator"), nullable=False)
+    used_by    = db.Column(db.Integer,   nullable=True)
+    created_at = db.Column(db.String(20), nullable=False)
+    expires_at = db.Column(db.String(20), nullable=False)
+    used_at    = db.Column(db.String(20), nullable=True)
+    status     = db.Column(db.String(20), nullable=False, server_default="ativo")
 
     def to_dict(self) -> dict:
         return {
@@ -510,7 +511,7 @@ class CheckinPin(db.Model):
         return f"CheckinPin(id={self.id}, client_id={self.client_id}, status='{self.status}')"
 
 
-# ── RESTAURA GLASS — Modelos isolados (nicho limpeza, company_id=17) ──────────
+# ── RESTAURA GLASS — Modelos isolados (nicho limpeza, company_id=17) ─────────
 # Não afetam nenhum outro nicho ou empresa do SV Finance.
 
 class LimpezaServiceCard(db.Model):
@@ -566,8 +567,8 @@ class LimpezaOccurrence(db.Model):
     hora               = db.Column(db.String(5),  nullable=True)
     reagendamento_data = db.Column(db.String(10), nullable=True)
     reagendamento_hora = db.Column(db.String(5),  nullable=True)
-    descricao          = db.Column(db.Text,        nullable=True)
-    created_at         = db.Column(db.DateTime,    nullable=False, server_default=db.func.now())
+    descricao          = db.Column(db.Text,       nullable=True)
+    created_at         = db.Column(db.DateTime,   nullable=False, server_default=db.func.now())
 
     def to_dict(self):
         return {
