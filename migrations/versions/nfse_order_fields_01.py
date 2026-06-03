@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision      = "nfse_order_fields_01"
-down_revision = "rg_limpeza_card_01_init"
+down_revision = "rg_limpeza_card_01"
 branch_labels = None
 depends_on    = None
 
