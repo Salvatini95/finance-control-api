@@ -185,50 +185,73 @@ class Quote(db.Model):
 
 
 class Client(db.Model):
+    """
+    Cliente da empresa (multi-tenant por company_id).
+
+    Suporta múltiplos emails e telefones via JSON (emails_json / phones_json).
+    O campo codigo_seq é gerado automaticamente e sequencial por empresa.
+    O campo codigo é o código exibido ao usuário (pode ser manual ou formatado do seq).
+    """
     __tablename__ = "clients"
 
-    id         = db.Column(db.Integer,     primary_key=True)
-    name       = db.Column(db.String(200), nullable=False)
-    email      = db.Column(db.String(200), nullable=True)
-    phone      = db.Column(db.String(50),  nullable=True)
-    document   = db.Column(db.String(50),  nullable=True)
-    address    = db.Column(db.String(300), nullable=True)
-    notes      = db.Column(db.String(500), nullable=True)
-    created_at = db.Column(db.String(20),  nullable=True)
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
 
-    inscricao_estadual = db.Column(db.String(30),  nullable=True)
-    cep                = db.Column(db.String(10),  nullable=True)
-    logradouro         = db.Column(db.String(200), nullable=True)
-    numero             = db.Column(db.String(20),  nullable=True)
-    complemento        = db.Column(db.String(100), nullable=True)
-    bairro             = db.Column(db.String(100), nullable=True)
-    municipio          = db.Column(db.String(100), nullable=True)
-    uf                 = db.Column(db.String(2),   nullable=True)
-    codigo_municipio   = db.Column(db.String(10),  nullable=True)
+    # ── Contato principal (legado + offline) ─────────────────────────────────
+    email = db.Column(db.String(200), nullable=True)
+    phone = db.Column(db.String(50), nullable=True)
 
-    codigo             = db.Column(db.String(30),  nullable=True)
-    cnpj               = db.Column(db.String(30),  nullable=True)
+    # ── Múltiplos contatos (JSON: ["a@b.com", "c@d.com"]) ────────────────────
+    emails_json = db.Column(db.Text, nullable=True)  # JSON array de strings
+    phones_json = db.Column(db.Text, nullable=True)  # JSON array de strings
 
-    latitude  = db.Column(db.Float, nullable=True)
+    document = db.Column(db.String(50), nullable=True)
+    address = db.Column(db.String(300), nullable=True)
+    notes = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.String(20), nullable=True)
+
+    inscricao_estadual = db.Column(db.String(30), nullable=True)
+    cep = db.Column(db.String(10), nullable=True)
+    logradouro = db.Column(db.String(200), nullable=True)
+    numero = db.Column(db.String(20), nullable=True)
+    complemento = db.Column(db.String(100), nullable=True)
+    bairro = db.Column(db.String(100), nullable=True)
+    municipio = db.Column(db.String(100), nullable=True)
+    uf = db.Column(db.String(2), nullable=True)
+    codigo_municipio = db.Column(db.String(10), nullable=True)
+
+    # ── Identificação ─────────────────────────────────────────────────────────
+    codigo = db.Column(db.String(30), nullable=True)  # código exibido (ex: "RG-001")
+    codigo_seq = db.Column(db.Integer, nullable=True)  # sequencial numérico por empresa
+    cnpj = db.Column(db.String(30), nullable=True)
+
+    latitude = db.Column(db.Float, nullable=True)
     longitude = db.Column(db.Float, nullable=True)
 
-    contrato_tipo            = db.Column(db.String(20),  nullable=True, server_default="avulso")
-    contrato_valor           = db.Column(db.Float(),     nullable=True)
-    contrato_forma_pagamento = db.Column(db.String(30),  nullable=True)
-    contrato_dia_pagamento   = db.Column(db.Integer(),   nullable=True)
-    contrato_inicio          = db.Column(db.String(20),  nullable=True)
-    contrato_fim             = db.Column(db.String(20),  nullable=True)
-    contrato_status          = db.Column(db.String(20),  nullable=True, server_default="ativo")
-    contrato_dias_semana     = db.Column(db.String(50),  nullable=True)
-    contrato_observacoes     = db.Column(db.Text(),      nullable=True)
+    # ── Contrato ──────────────────────────────────────────────────────────────
+    contrato_tipo = db.Column(db.String(20), nullable=True, server_default="avulso")
+    contrato_valor = db.Column(db.Float(), nullable=True)
+    contrato_forma_pagamento = db.Column(db.String(30), nullable=True)
+    contrato_dia_pagamento = db.Column(db.Integer(), nullable=True)
+    contrato_inicio = db.Column(db.String(20), nullable=True)
+    contrato_fim = db.Column(db.String(20), nullable=True)
+    contrato_status = db.Column(db.String(20), nullable=True, server_default="ativo")
+    contrato_dias_semana = db.Column(db.String(50), nullable=True)
+    contrato_observacoes = db.Column(db.Text(), nullable=True)
+    contrato_modelo = db.Column(db.Text(), nullable=True)  # texto livre do contrato
 
+    # ── Recorrência (campo separado do tipo de contrato) ──────────────────────
+    # Valores: mensal | quinzenal | semanal | anual | esporadico
+    recorrencia = db.Column(db.String(20), nullable=True)
+
+    # ── Multi-tenant ──────────────────────────────────────────────────────────
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_client_company"), nullable=True)
-    user_id    = db.Column(db.Integer, db.ForeignKey("users.id",     name="fk_client_user"),    nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", name="fk_client_user"), nullable=False)
 
-    orders          = db.relationship("Order",         backref="client", lazy=True)
+    orders = db.relationship("Order", backref="client", lazy=True)
     service_records = db.relationship("ServiceRecord", backref="client", lazy=True)
-    quotes          = db.relationship("Quote",         backref="client", lazy=True)
-    checkins        = db.relationship(
+    quotes = db.relationship("Quote", backref="client", lazy=True)
+    checkins = db.relationship(
         "ServiceCheckin",
         back_populates="client_rel",
         lazy=True,
@@ -239,6 +262,60 @@ class Client(db.Model):
     def endereco_completo(self):
         partes = [self.logradouro, self.numero, self.bairro, self.municipio, self.uf]
         return ", ".join([p for p in partes if p]) or (self.address or "—")
+
+    def to_dict(self, include_relations=False) -> dict:
+        """Serialização completa do cliente."""
+        import json
+        data = {
+            "id": self.id,
+            "codigo": self.codigo,
+            "codigo_seq": self.codigo_seq,
+            "name": self.name,
+            "email": self.email,
+            "phone": self.phone,
+            "emails": json.loads(self.emails_json) if self.emails_json else [],
+            "phones": json.loads(self.phones_json) if self.phones_json else [],
+            "document": self.document,
+            "cnpj": self.cnpj,
+            "address": self.address,
+            "notes": self.notes,
+            "created_at": self.created_at,
+            "cep": self.cep,
+            "logradouro": self.logradouro,
+            "numero": self.numero,
+            "bairro": self.bairro,
+            "municipio": self.municipio,
+            "uf": self.uf,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "tem_gps": self.latitude is not None and self.longitude is not None,
+            "contrato_tipo": self.contrato_tipo,
+            "contrato_valor": self.contrato_valor,
+            "contrato_forma_pagamento": self.contrato_forma_pagamento,
+            "contrato_dia_pagamento": self.contrato_dia_pagamento,
+            "contrato_inicio": self.contrato_inicio,
+            "contrato_fim": self.contrato_fim,
+            "contrato_status": self.contrato_status,
+            "contrato_dias_semana": self.contrato_dias_semana,
+            "contrato_observacoes": self.contrato_observacoes,
+            "contrato_modelo": self.contrato_modelo,
+            "recorrencia": self.recorrencia,
+        }
+        if include_relations:
+            data["quotes"] = [
+                {"id": q.id, "number": q.number, "status": q.status,
+                 "total": q.total, "created_at": q.created_at}
+                for q in self.quotes
+            ]
+            data["orders"] = [
+                {"id": o.id, "number": o.number, "status": o.status,
+                 "total": o.total, "created_at": o.created_at}
+                for o in self.orders
+            ]
+        return data
+
+    def __repr__(self) -> str:
+        return f"Client(id={self.id}, name='{self.name}', codigo='{self.codigo}')"
 
 
 class Order(db.Model):
