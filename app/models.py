@@ -31,6 +31,12 @@ class Company(db.Model):
     telefone            = db.Column(db.String(20),  nullable=True)
     token_focusnfe      = db.Column(db.String(100), nullable=True)
 
+    # ── Billing / Asaas ──────────────────────────────────────────────────────
+    asaas_customer_id = db.Column(db.String(50), nullable=True)
+    trial_ends_at     = db.Column(db.String(20), nullable=True)
+    plan_interval     = db.Column(db.String(10), nullable=True, server_default="monthly")
+    plan_locked_at    = db.Column(db.String(20), nullable=True)
+
     users            = db.relationship("User",          backref="company", lazy=True)
     transactions     = db.relationship("Transaction",   backref="company", lazy=True)
     bills            = db.relationship("Bill",          backref="company", lazy=True)
@@ -43,6 +49,7 @@ class Company(db.Model):
     brand_projects   = db.relationship("BrandProject",  backref="company", lazy=True)
     brand_assets     = db.relationship("BrandAsset",    backref="company", lazy=True)
     service_checkins = db.relationship("ServiceCheckin", back_populates="company_rel", lazy=True)
+    subscriptions    = db.relationship("Subscription",  back_populates="company", lazy=True)
 
 
 class User(db.Model):
@@ -202,8 +209,8 @@ class Client(db.Model):
     phone = db.Column(db.String(50), nullable=True)
 
     # ── Múltiplos contatos (JSON: ["a@b.com", "c@d.com"]) ────────────────────
-    emails_json = db.Column(db.Text, nullable=True)  # JSON array de strings
-    phones_json = db.Column(db.Text, nullable=True)  # JSON array de strings
+    emails_json = db.Column(db.Text, nullable=True)
+    phones_json = db.Column(db.Text, nullable=True)
 
     document = db.Column(db.String(50), nullable=True)
     address = db.Column(db.String(300), nullable=True)
@@ -221,8 +228,8 @@ class Client(db.Model):
     codigo_municipio = db.Column(db.String(10), nullable=True)
 
     # ── Identificação ─────────────────────────────────────────────────────────
-    codigo = db.Column(db.String(30), nullable=True)  # código exibido (ex: "RG-001")
-    codigo_seq = db.Column(db.Integer, nullable=True)  # sequencial numérico por empresa
+    codigo = db.Column(db.String(30), nullable=True)
+    codigo_seq = db.Column(db.Integer, nullable=True)
     cnpj = db.Column(db.String(30), nullable=True)
 
     latitude = db.Column(db.Float, nullable=True)
@@ -238,10 +245,9 @@ class Client(db.Model):
     contrato_status = db.Column(db.String(20), nullable=True, server_default="ativo")
     contrato_dias_semana = db.Column(db.String(50), nullable=True)
     contrato_observacoes = db.Column(db.Text(), nullable=True)
-    contrato_modelo = db.Column(db.Text(), nullable=True)  # texto livre do contrato
+    contrato_modelo = db.Column(db.Text(), nullable=True)
 
-    # ── Recorrência (campo separado do tipo de contrato) ──────────────────────
-    # Valores: mensal | quinzenal | semanal | anual | esporadico
+    # ── Recorrência ───────────────────────────────────────────────────────────
     recorrencia = db.Column(db.String(20), nullable=True)
 
     # ── Multi-tenant ──────────────────────────────────────────────────────────
@@ -337,7 +343,7 @@ class Order(db.Model):
     nfe_chave  = db.Column(db.String(50),  nullable=True)
     nfe_status = db.Column(db.String(20),  nullable=True)
     nfe_numero = db.Column(db.String(10),  nullable=True)
-    nfe_ref    = db.Column(db.String(64),  nullable=True)  # referência Focus NF-e
+    nfe_ref    = db.Column(db.String(64),  nullable=True)
 
     company_id     = db.Column(db.Integer, db.ForeignKey("companies.id",    name="fk_order_company"),     nullable=True)
     client_id      = db.Column(db.Integer, db.ForeignKey("clients.id",      name="fk_order_client"),      nullable=False)
@@ -588,7 +594,7 @@ class CheckinPin(db.Model):
         return f"CheckinPin(id={self.id}, client_id={self.client_id}, status='{self.status}')"
 
 
-# ── RESTAURA GLASS — Modelos isolados (nicho limpeza, company_id=17) ─────────
+# ── RESTAURA GLASS — Modelos isolados (nicho limpeza, company_id=20) ──────────
 # Não afetam nenhum outro nicho ou empresa do SV Finance.
 
 class LimpezaServiceCard(db.Model):
@@ -661,3 +667,63 @@ class LimpezaOccurrence(db.Model):
             "descricao":          self.descricao,
             "created_at":         self.created_at.isoformat() if self.created_at else None,
         }
+
+
+# ── BILLING / ASSINATURA SAAS ─────────────────────────────────────────────────
+
+class Subscription(db.Model):
+    """
+    Assinatura SaaS do SV Finance via Asaas.
+
+    Ciclo de vida:
+      trial  → active  (pagamento confirmado)
+      active → overdue (pagamento vencido)
+      overdue → active (pagamento recuperado)
+      active → canceled (cancelamento)
+
+    O campo `founder` trava o preço para clientes que assinaram na Fase 1.
+    O campo `plan` espelha company.plan para consultas rápidas.
+    Webhooks do Asaas atualizam `status`, `last_event` e `last_event_at`.
+    """
+    __tablename__ = "subscriptions"
+
+    id                    = db.Column(db.Integer,    primary_key=True)
+    asaas_subscription_id = db.Column(db.String(50), nullable=True, index=True)
+    asaas_customer_id     = db.Column(db.String(50), nullable=True)
+    plan                  = db.Column(db.String(20), nullable=False, server_default="free")
+    interval              = db.Column(db.String(10), nullable=False, server_default="monthly")
+    status                = db.Column(db.String(20), nullable=False, server_default="trial")
+    valor                 = db.Column(db.Float,      nullable=False, default=0.0)
+    next_due_date         = db.Column(db.String(20), nullable=True)
+    trial_ends_at         = db.Column(db.String(20), nullable=True)
+    founder               = db.Column(db.Boolean,   nullable=False, default=True)
+    billing_type          = db.Column(db.String(20), nullable=False, server_default="PIX")
+    asaas_payment_id      = db.Column(db.String(50), nullable=True)
+    last_event            = db.Column(db.String(50), nullable=True)
+    last_event_at         = db.Column(db.String(30), nullable=True)
+    created_at            = db.Column(db.String(20), nullable=True)
+
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", name="fk_subscription_company"), nullable=False)
+
+    company = db.relationship("Company", back_populates="subscriptions", foreign_keys=[company_id])
+
+    def to_dict(self) -> dict:
+        return {
+            "id":                    self.id,
+            "plan":                  self.plan,
+            "interval":              self.interval,
+            "status":                self.status,
+            "valor":                 self.valor,
+            "next_due_date":         self.next_due_date,
+            "trial_ends_at":         self.trial_ends_at,
+            "founder":               self.founder,
+            "billing_type":          self.billing_type,
+            "asaas_subscription_id": self.asaas_subscription_id,
+            "last_event":            self.last_event,
+            "last_event_at":         self.last_event_at,
+            "created_at":            self.created_at,
+            "company_id":            self.company_id,
+        }
+
+    def __repr__(self) -> str:
+        return f"Subscription(id={self.id}, company_id={self.company_id}, plan='{self.plan}', status='{self.status}')"
