@@ -58,6 +58,27 @@ def checkin_finish(checkin_id):
     code = result.pop("code", 200)
     return jsonify(result), code
 
+# ── POST /api/checkin/pin/validate ────────────────────────────────────────────
+@checkin_bp.route("/checkin/pin/validate", methods=["POST"])
+@jwt_required()
+def validar_pin():
+    """
+    Valida PIN digitado pelo colaborador.
+    Aceita PIN permanente (4 dígitos) ou PIN temporário (6 dígitos).
+
+    Body: { client_id, pin }
+    Returns: { ok, tipo, pin_id }
+    """
+    user   = _get_user(get_jwt_identity())
+    data   = request.get_json() or {}
+    result = PinService.validar(
+        user=user,
+        client_id=data.get("client_id"),
+        pin=data.get("pin", ""),
+    )
+    code = result.pop("code", 200)
+    return jsonify(result), code
+
 # ── POST /api/checkin/pin/generate (admin/encarregado) ───────────────────────
 @checkin_bp.route("/checkin/pin/generate", methods=["POST"])
 @jwt_required()
@@ -92,7 +113,6 @@ def sincronizar():
 @checkin_bp.route("/orders/<int:order_id>/checkins", methods=["GET"])
 @jwt_required()
 def get_order_checkins(order_id):
-    """Retorna todos os checkins de uma OS — para o modal de detalhes."""
     user = _get_user(get_jwt_identity())
     checkins = CheckinService.buscar_checkins_da_os(order_id, user.company_id)
     return jsonify(checkins), 200
@@ -109,6 +129,7 @@ def get_client_qrcode(client_id):
         "qr_token":    CheckinService.gerar_url_qr_universal(),
         "client_id":   client_id,
         "client_name": client.name,
+        "pin_cliente": client.pin_cliente,
         "raio_metros": RAIO_MAXIMO_METROS,
     }), 200
 
