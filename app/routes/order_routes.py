@@ -78,6 +78,26 @@ def _next_order_number(user, prefix="PED"):
     return f"{prefix}-{year}-{count:03d}"
 
 
+def _build_address(client) -> str:
+    """Monta endereço legível para exibição — nunca expõe coordenadas ao colaborador."""
+    if not client:
+        return ""
+    parts = []
+    if client.logradouro:
+        parts.append(client.logradouro)
+    if client.numero:
+        parts.append(client.numero)
+    if client.bairro:
+        parts.append(client.bairro)
+    if client.municipio:
+        parts.append(client.municipio)
+    if client.uf:
+        parts.append(client.uf)
+    if parts:
+        return ", ".join(parts)
+    return client.address or ""
+
+
 def _serialize_order(o):
     return {
         "id":             o.id,
@@ -98,7 +118,10 @@ def _serialize_order(o):
         "transaction_id": o.transaction_id,
         "user_id":        o.user_id,
         # ✅ expõe o tipo de documento para o frontend
-        "doc_type":       "OS" if o.number.startswith("OS-") else "PED",
+        "doc_type":         "OS" if o.number.startswith("OS-") else "PED",
+        "client_latitude":  o.client.latitude  if o.client else None,
+        "client_longitude": o.client.longitude if o.client else None,
+        "client_address":   _build_address(o.client),
     }
 
 
