@@ -6,8 +6,9 @@ from app.extensions import db
 from app.models import Client, Order, ServiceCheckin, User
 from app.services.pin_service import PinService
 
-RAIO_COLABORADOR_METROS = 25       # raio padrão para colaboradores
-RAIO_ADMIN_METROS       = 10000    # admin não precisa estar no local
+import os
+RAIO_COLABORADOR_METROS = int(os.environ.get("RAIO_CHECKIN_METROS", "25"))
+RAIO_ADMIN_METROS       = int(os.environ.get("RAIO_ADMIN_METROS",   "10000"))
 QR_CODE_UNIVERSAL       = "sv-checkin-universal"
 
 
@@ -68,7 +69,7 @@ class CheckinService:
             }
 
         distancia = _haversine_metros(lat, lon, client.latitude, client.longitude)
-        raio      = RAIO_ADMIN_METROS if is_admin else RAIO_COLABORADOR_METROS
+        raio      = RAIO_COLABORADOR_METROS
 
         if distancia <= raio:
             return {"ok": True, "distancia_metros": round(distancia), "msg": "📍 Localização confirmada."}
