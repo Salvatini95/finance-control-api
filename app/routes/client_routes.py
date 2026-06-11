@@ -11,8 +11,18 @@ atribui o próximo codigo_seq disponível para a empresa e formata
 o campo codigo como "001", "002", etc. Se o admin já enviou um
 codigo manual, pergunta-se no frontend se quer substituir (flag
 `confirmar_substituicao_codigo` no payload).
+
+Geocode (11/06/2026):
+  Substituído ViaCEP+centróide por Nominatim com endereço completo.
+  Ordem de tentativas:
+    1. logradouro + número + município + UF  (mais preciso — endereço exato)
+    2. logradouro + município + UF           (sem número — fallback)
+    3. município + UF                        (só cidade — último recurso)
+  Para clientes em shopping/multilojas: admin deve usar
+  "📍 Salvar localização exata" no local físico após cadastro.
 """
 import json
+import time
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.extensions import db
@@ -22,6 +32,32 @@ from sqlalchemy import func
 import requests as http
 
 client_bp = Blueprint("clients", __name__)
+
+# ── Nominatim: respeita rate limit de 1 req/s ────────────────────────────────
+_ultimo_nominatim = 0.0
+
+def _nominatim_get(params: dict) -> list:
+    """
+    Faz GET no Nominatim respeitando rate limit de 1 req/segundo.
+    Retorna lista de resultados ou [] em caso de erro.
+    """
+    global _ultimo_nominatim
+    agora    = time.monotonic()
+    espera   = 1.0 - (agora - _ultimo_nominatim)
+    if espera > 0:
+        time.sleep(espera)
+    _ultimo_nominatim = time.monotonic()
+
+    try:
+        r = http.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={**params, "format": "json", "limit": 1, "countrycodes": "br"},
+            timeout=8,
+            headers={"User-Agent": "SVFinance/1.0 (contato@svfinance.com.br)"},
+        )
+        return r.json() if r.ok else []
+    except Exception:
+        return []
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -67,7 +103,6 @@ def _json_lista(valor) -> str:
     if valor is None:
         return "[]"
     if isinstance(valor, list):
-        # filtra strings vazias
         return json.dumps([v for v in valor if v and str(v).strip()])
     if isinstance(valor, str):
         try:
@@ -79,10 +114,79 @@ def _json_lista(valor) -> str:
     return "[]"
 
 
-def _cep_para_coordenadas(cep: str) -> dict:
+def _geocode_endereco(logradouro: str, numero: str, municipio: str, uf: str) -> dict | None:
+    """
+    Geocodifica um endereço completo via Nominatim.
+
+    Tenta em ordem crescente de fallback:
+      1. logradouro + número + município + UF  → mais preciso
+      2. logradouro + município + UF           → sem número
+      3. município + UF                        → só cidade (último recurso)
+
+    Retorna dict com lat, lon, precisao ('numero'|'logradouro'|'cidade'|None)
+    ou None se nenhuma tentativa retornou resultado.
+
+    Args:
+        logradouro: nome da rua/av (ex: "Avenida Brasil")
+        numero:     número do imóvel (ex: "1500") — pode ser vazio
+        municipio:  cidade (ex: "Maringá")
+        uf:         estado (ex: "PR")
+    """
+    if not municipio or not uf:
+        return None
+
+    cidade_uf = f"{municipio}, {uf}, Brasil"
+
+    # Tentativa 1: endereço completo com número
+    if logradouro and numero:
+        q = f"{logradouro}, {numero}, {municipio}, {uf}, Brasil"
+        res = _nominatim_get({"q": q})
+        if res:
+            return {
+                "lat":      float(res[0]["lat"]),
+                "lon":      float(res[0]["lon"]),
+                "precisao": "numero",  # GPS com número — mais confiável
+            }
+
+    # Tentativa 2: logradouro sem número
+    if logradouro:
+        q = f"{logradouro}, {municipio}, {uf}, Brasil"
+        res = _nominatim_get({"q": q})
+        if res:
+            return {
+                "lat":      float(res[0]["lat"]),
+                "lon":      float(res[0]["lon"]),
+                "precisao": "logradouro",  # GPS pelo logradouro — aproximado
+            }
+
+    # Tentativa 3: só cidade
+    res = _nominatim_get({"q": cidade_uf})
+    if res:
+        return {
+            "lat":      float(res[0]["lat"]),
+            "lon":      float(res[0]["lon"]),
+            "precisao": "cidade",  # GPS pela cidade — centróide, impreciso
+        }
+
+    return None
+
+
+def _cep_para_coordenadas(cep: str, numero: str = "") -> dict:
+    """
+    Busca dados do CEP via ViaCEP e geocodifica via Nominatim.
+
+    Sempre passa número quando disponível para melhorar precisão.
+    Retorna dict com campos de endereço + lat/lon + precisao.
+
+    Args:
+        cep:    CEP com ou sem formatação
+        numero: número do imóvel (opcional mas recomendado)
+    """
     cep_limpo = "".join(filter(str.isdigit, cep or ""))
     if len(cep_limpo) != 8:
         return None
+
+    # Busca dados estruturados do CEP
     try:
         r = http.get(
             f"https://viacep.com.br/ws/{cep_limpo}/json/",
@@ -100,38 +204,31 @@ def _cep_para_coordenadas(cep: str) -> dict:
     municipio  = viacep.get("localidade", "")
     uf         = viacep.get("uf",         "")
 
-    try:
-        query = f"{logradouro}, {bairro}, {municipio}, {uf}, Brasil"
-        r2 = http.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={"q": query, "format": "json", "limit": 1, "countrycodes": "br"},
-            timeout=8,
-            headers={"User-Agent": "SVFinance/1.0 (contato@svfinance.com.br)"},
-        )
-        resultados = r2.json()
-        if not resultados:
-            r3 = http.get(
-                "https://nominatim.openstreetmap.org/search",
-                params={"q": f"{municipio}, {uf}, Brasil", "format": "json", "limit": 1, "countrycodes": "br"},
-                timeout=8,
-                headers={"User-Agent": "SVFinance/1.0 (contato@svfinance.com.br)"},
-            )
-            resultados = r3.json()
-        if resultados:
-            return {
-                "lat": float(resultados[0]["lat"]),
-                "lon": float(resultados[0]["lon"]),
-                "logradouro": logradouro, "bairro": bairro,
-                "municipio": municipio, "uf": uf, "cep": cep_limpo,
-            }
-    except Exception:
-        pass
+    # Geocodifica com número quando disponível
+    geo = _geocode_endereco(logradouro, numero or "", municipio, uf)
 
     return {
-        "lat": None, "lon": None,
-        "logradouro": logradouro, "bairro": bairro,
-        "municipio": municipio, "uf": uf, "cep": cep_limpo,
+        "lat":        geo["lat"]      if geo else None,
+        "lon":        geo["lon"]      if geo else None,
+        "precisao":   geo["precisao"] if geo else None,
+        "logradouro": logradouro,
+        "bairro":     bairro,
+        "municipio":  municipio,
+        "uf":         uf,
+        "cep":        cep_limpo,
     }
+
+
+def _geo_msg(geo: dict | None) -> str:
+    """Mensagem de feedback de geocode para o frontend."""
+    if not geo or not geo.get("lat"):
+        return "⚠️ Endereço não geocodificado — salve a localização no local"
+    precisao = geo.get("precisao")
+    if precisao == "numero":
+        return "📍 Localização salva pelo endereço completo"
+    if precisao == "logradouro":
+        return "📍 Localização aproximada pelo logradouro — confirme no local"
+    return "⚠️ Localização aproximada pela cidade — salve no local físico"
 
 
 def _client_to_dict(c: Client, include_relations=False) -> dict:
@@ -217,8 +314,8 @@ def get_proximo_codigo():
     user = _get_user(get_jwt_identity())
     if not user.company_id:
         return jsonify({"msg": "Empresa não encontrada"}), 400
-    seq     = _proximo_codigo_seq(user.company_id)
-    codigo  = _formatar_codigo(seq)
+    seq    = _proximo_codigo_seq(user.company_id)
+    codigo = _formatar_codigo(seq)
     return jsonify({"seq": seq, "codigo": codigo}), 200
 
 
@@ -232,7 +329,9 @@ def create_client():
     if not name:
         return jsonify({"msg": "Nome é obrigatório"}), 400
 
-    geo = _cep_para_coordenadas(data.get("cep", ""))
+    # Geocode com número para máxima precisão
+    numero = _none_if_empty(data.get("numero"))
+    geo    = _cep_para_coordenadas(data.get("cep", ""), numero or "")
 
     # ── Geração de código sequencial ──────────────────────────────────────────
     codigo_manual = _none_if_empty(data.get("codigo"))
@@ -246,12 +345,10 @@ def create_client():
         codigo = codigo_manual
 
     # ── Emails e telefones múltiplos ──────────────────────────────────────────
-    emails_json = _json_lista(data.get("emails", []))
-    phones_json = _json_lista(data.get("phones", []))
-
-    # email/phone principal = primeiro da lista (compatibilidade offline/legado)
-    emails_lista = json.loads(emails_json)
-    phones_lista = json.loads(phones_json)
+    emails_json     = _json_lista(data.get("emails", []))
+    phones_json     = _json_lista(data.get("phones", []))
+    emails_lista    = json.loads(emails_json)
+    phones_lista    = json.loads(phones_json)
     email_principal = _none_if_empty(emails_lista[0]) if emails_lista else _none_if_empty(data.get("email"))
     phone_principal = _none_if_empty(phones_lista[0]) if phones_lista else _none_if_empty(data.get("phone"))
 
@@ -275,7 +372,7 @@ def create_client():
         bairro      = geo["bairro"]     if geo else _none_if_empty(data.get("bairro")),
         municipio   = geo["municipio"]  if geo else _none_if_empty(data.get("municipio")),
         uf          = geo["uf"]         if geo else _none_if_empty(data.get("uf")),
-        numero      = _none_if_empty(data.get("numero")),
+        numero      = numero,
         latitude    = geo["lat"] if geo else None,
         longitude   = geo["lon"] if geo else None,
         contrato_tipo            = _none_if_empty(data.get("contrato_tipo"))            or "avulso",
@@ -294,16 +391,13 @@ def create_client():
     db.session.commit()
 
     return jsonify({
-        "msg":     "Cliente criado com sucesso",
-        "id":      c.id,
-        "name":    c.name,
-        "codigo":  c.codigo,
-        "tem_gps": c.latitude is not None,
-        "geo_msg": (
-            "📍 Localização salva automaticamente pelo CEP"
-            if (geo and geo.get("lat"))
-            else "⚠️ CEP não encontrado — localização não salva"
-        ),
+        "msg":      "Cliente criado com sucesso",
+        "id":       c.id,
+        "name":     c.name,
+        "codigo":   c.codigo,
+        "tem_gps":  c.latitude is not None,
+        "geo_msg":  _geo_msg(geo),
+        "precisao": geo["precisao"] if geo else None,
     }), 201
 
 
@@ -327,10 +421,8 @@ def update_client(client_id):
     # ── Código: respeita flag de substituição ─────────────────────────────────
     novo_codigo = _none_if_empty(data.get("codigo"))
     if novo_codigo and novo_codigo != c.codigo:
-        # frontend envia confirmar_substituicao_codigo=True quando o admin confirmou
         if data.get("confirmar_substituicao_codigo") or not c.codigo:
             c.codigo = novo_codigo
-        # se não confirmou, retorna aviso sem alterar (frontend mostrará modal)
         elif c.codigo:
             return jsonify({
                 "codigo_conflito": True,
@@ -341,15 +433,15 @@ def update_client(client_id):
 
     # ── Emails e telefones múltiplos ──────────────────────────────────────────
     if "emails" in data:
-        emails_json     = _json_lista(data["emails"])
-        c.emails_json   = emails_json
-        lista           = json.loads(emails_json)
-        c.email         = _none_if_empty(lista[0]) if lista else c.email
+        emails_json   = _json_lista(data["emails"])
+        c.emails_json = emails_json
+        lista         = json.loads(emails_json)
+        c.email       = _none_if_empty(lista[0]) if lista else c.email
     if "phones" in data:
-        phones_json     = _json_lista(data["phones"])
-        c.phones_json   = phones_json
-        lista           = json.loads(phones_json)
-        c.phone         = _none_if_empty(lista[0]) if lista else c.phone
+        phones_json   = _json_lista(data["phones"])
+        c.phones_json = phones_json
+        lista         = json.loads(phones_json)
+        c.phone       = _none_if_empty(lista[0]) if lista else c.phone
 
     # ── Contrato ──────────────────────────────────────────────────────────────
     c.contrato_tipo            = _none_if_empty(data.get("contrato_tipo",            c.contrato_tipo))   or "avulso"
@@ -365,20 +457,34 @@ def update_client(client_id):
     c.recorrencia              = _none_if_empty(data.get("recorrencia",              c.recorrencia))
 
     # ── CEP / geolocalização ──────────────────────────────────────────────────
-    novo_cep = data.get("cep", "")
-    geo_msg  = None
-    if novo_cep and novo_cep != c.cep:
-        geo = _cep_para_coordenadas(novo_cep)
+    # Regeocodifica quando CEP ou número mudam — usa número atualizado para mais precisão
+    novo_cep    = data.get("cep", "")
+    novo_numero = _none_if_empty(data.get("numero", ""))
+    geo_msg_val = None
+
+    cep_mudou    = novo_cep    and novo_cep    != c.cep
+    numero_mudou = novo_numero and novo_numero != c.numero
+
+    if cep_mudou or (numero_mudou and c.cep):
+        cep_usar = novo_cep if cep_mudou else c.cep
+        geo = _cep_para_coordenadas(cep_usar, novo_numero or c.numero or "")
         if geo:
-            c.cep = geo["cep"]; c.logradouro = geo["logradouro"]; c.bairro = geo["bairro"]
-            c.municipio = geo["municipio"]; c.uf = geo["uf"]
-            c.latitude = geo["lat"]; c.longitude = geo["lon"]
-            geo_msg = "📍 Localização atualizada pelo CEP" if geo.get("lat") else "⚠️ CEP não geocodificado"
+            c.cep       = geo["cep"]
+            c.logradouro = geo["logradouro"]
+            c.bairro    = geo["bairro"]
+            c.municipio = geo["municipio"]
+            c.uf        = geo["uf"]
+            c.latitude  = geo["lat"]
+            c.longitude = geo["lon"]
+            geo_msg_val = _geo_msg(geo)
         else:
-            geo_msg = "⚠️ CEP inválido"
+            geo_msg_val = "⚠️ CEP inválido"
 
     db.session.commit()
-    return jsonify({"msg": "Cliente atualizado com sucesso", "geo_msg": geo_msg}), 200
+    return jsonify({
+        "msg":     "Cliente atualizado com sucesso",
+        "geo_msg": geo_msg_val,
+    }), 200
 
 
 @client_bp.route("/clients/<int:client_id>", methods=["DELETE"])
@@ -421,8 +527,15 @@ def set_client_location(client_id):
 @client_bp.route("/clients/geocode-cep", methods=["POST"])
 @jwt_required()
 def geocode_cep():
-    data = request.get_json() or {}
-    geo  = _cep_para_coordenadas(data.get("cep", ""))
+    """
+    Geocodifica um endereço a partir do CEP + número (quando disponível).
+
+    Body: { cep, numero }  — numero é opcional mas melhora a precisão
+    Returns: dados do endereço + latitude/longitude + precisao + tem_gps
+    """
+    data   = request.get_json() or {}
+    numero = _none_if_empty(data.get("numero", ""))
+    geo    = _cep_para_coordenadas(data.get("cep", ""), numero or "")
     if not geo:
         return jsonify({"msg": "CEP não encontrado"}), 404
     return jsonify({
@@ -434,4 +547,6 @@ def geocode_cep():
         "latitude":   geo["lat"],
         "longitude":  geo["lon"],
         "tem_gps":    geo["lat"] is not None,
+        "precisao":   geo["precisao"],
+        "geo_msg":    _geo_msg(geo),
     }), 200
