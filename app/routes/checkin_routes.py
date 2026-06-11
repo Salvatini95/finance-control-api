@@ -2,7 +2,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import User, Client, ServiceCheckin
-from app.services.checkin_service import CheckinService, RAIO_COLABORADOR_METROS
+from app.services.checkin_service import CheckinService, _raio_metros
 from app.services.pin_service import PinService
 
 checkin_bp = Blueprint("checkin", __name__)
@@ -181,7 +181,7 @@ def get_client_qrcode(client_id):
         "client_id":   client_id,
         "client_name": client.name,
         "pin_cliente": client.pin_cliente,
-        "raio_metros": RAIO_COLABORADOR_METROS,
+        "raio_metros": _raio_metros(),
         "tem_gps":     client.latitude is not None and client.longitude is not None,
     }), 200
 
