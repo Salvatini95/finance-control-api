@@ -1,19 +1,26 @@
 # app/services/checkin_service.py
 import math
+import os
 import uuid
 from datetime import datetime, timezone, date
 from app.extensions import db
 from app.models import Client, Order, ServiceCheckin, User
 from app.services.pin_service import PinService
 
-import os
-RAIO_COLABORADOR_METROS = int(os.environ.get("RAIO_CHECKIN_METROS", "25"))
-RAIO_ADMIN_METROS       = int(os.environ.get("RAIO_ADMIN_METROS",   "10000"))
-QR_CODE_UNIVERSAL       = "sv-checkin-universal"
+QR_CODE_UNIVERSAL = "sv-checkin-universal"
+
+
+def _raio_metros() -> int:
+    """
+    Lê o raio em metros da variável de ambiente a cada chamada.
+    Evita cache de import — mudança no Render vale sem redeploy.
+    """
+    return int(os.environ.get("RAIO_CHECKIN_METROS", "25"))
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
 
 def _diff_minutes(start_str, end_str):
     try:
@@ -24,13 +31,15 @@ def _diff_minutes(start_str, end_str):
     except Exception:
         return None
 
+
 def _haversine_metros(lat1, lon1, lat2, lon2):
-    R = 6_371_000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    R    = 6_371_000
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    a    = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 class CheckinService:
@@ -44,14 +53,14 @@ class CheckinService:
         """
         Valida presença por GPS.
 
-        - Cliente SEM coordenadas → BLOQUEIA (precisa de PIN do encarregado).
-        - Colaborador sem GPS      → BLOQUEIA.
-        - Dentro do raio           → ok.
-        - Fora do raio             → bloqueia, sem revelar distância/raio ao colaborador.
+        - Cliente SEM coordenadas → bloqueia (precisa de PIN do encarregado).
+        - Colaborador sem GPS     → bloqueia.
+        - Dentro do raio          → ok.
+        - Fora do raio            → bloqueia, sem revelar distância ao colaborador.
 
-        Raio colaborador: 25m (evita conflito entre lojas próximas, ex: shopping).
-        Raio admin: 10km (admin não precisa estar no local).
-        distancia_metros vai no dict para uso interno/admin, nunca na msg do colaborador.
+        Raio: lido do env RAIO_CHECKIN_METROS a cada chamada (sem cache de import).
+        Admin e colaborador usam o mesmo raio — diferença é só em permissões de PIN.
+        distancia_metros vai no dict para uso interno/admin; nunca exibido ao colaborador.
         """
         if not client.latitude or not client.longitude:
             return {
@@ -60,6 +69,7 @@ class CheckinService:
                 "msg": "Este cliente não tem localização cadastrada. Solicite um PIN ao seu encarregado.",
                 "sem_coordenadas": True,
             }
+
         if lat is None or lon is None:
             return {
                 "ok": False,
@@ -69,10 +79,14 @@ class CheckinService:
             }
 
         distancia = _haversine_metros(lat, lon, client.latitude, client.longitude)
-        raio      = RAIO_COLABORADOR_METROS
+        raio      = _raio_metros()  # ← lido agora, não no import
 
         if distancia <= raio:
-            return {"ok": True, "distancia_metros": round(distancia), "msg": "📍 Localização confirmada."}
+            return {
+                "ok": True,
+                "distancia_metros": round(distancia),
+                "msg": "📍 Localização confirmada.",
+            }
 
         return {
             "ok": False,
@@ -132,10 +146,10 @@ class CheckinService:
         2. Idempotência por local_id (offline sync).
         3. Cliente e O.S existem e pertencem à empresa.
         4. Não há check-in aberto para a mesma O.S.
-        5a. Se cliente SEM GPS + PIN fornecido → PinService.validar().
+        5a. Cliente SEM GPS + PIN fornecido → PinService.validar().
             GPS do colaborador NÃO é salvo automaticamente — admin deve
-            salvar via salvar_localizacao_cliente() ao colar o adesivo.
-        5b. Se cliente COM GPS → validar_geolocalizacao() (raio 25m).
+            usar salvar_localizacao_cliente() ao colar o adesivo.
+        5b. Cliente COM GPS → validar_geolocalizacao() (raio via env).
 
         Args:
             user:           Usuário autenticado.
@@ -161,10 +175,14 @@ class CheckinService:
             ).first()
             if dup:
                 return {
-                    "ok": True, "msg": "Check-in já registrado.",
-                    "checkin_id": dup.id, "checkin_at": dup.checkin_at,
-                    "client_name": "", "order_id": dup.order_id,
-                    "duplicate": True, "code": 200,
+                    "ok": True,
+                    "msg": "Check-in já registrado.",
+                    "checkin_id": dup.id,
+                    "checkin_at": dup.checkin_at,
+                    "client_name": "",
+                    "order_id": dup.order_id,
+                    "duplicate": True,
+                    "code": 200,
                 }
 
         client = Client.query.filter_by(id=client_id, company_id=user.company_id).first()
@@ -183,7 +201,7 @@ class CheckinService:
 
             existing = ServiceCheckin.query.filter_by(
                 order_id=order_id, user_id=user.id, type="checkin"
-            ).filter(ServiceCheckin.checkout_at == None).first()
+            ).filter(ServiceCheckin.checkout_at == None).first()  # noqa: E711
             if existing:
                 return {
                     "ok": False,
@@ -213,13 +231,14 @@ class CheckinService:
                     "msg": geo["msg"],
                     "distancia_metros": geo.get("distancia_metros"),
                     "sem_coordenadas": geo.get("sem_coordenadas", False),
+                    "sem_gps": geo.get("sem_gps", False),
                     "code": 400,
                 }
 
         if order and order.status == "open":
             order.status = "in_progress"
 
-        now = _now()
+        now     = _now()
         checkin = ServiceCheckin(
             client_id=client_id,
             user_id=user.id,
@@ -293,6 +312,7 @@ class CheckinService:
                         "msg": geo["msg"],
                         "distancia_metros": geo.get("distancia_metros"),
                         "sem_coordenadas": geo.get("sem_coordenadas", False),
+                        "sem_gps": geo.get("sem_gps", False),
                         "code": 400,
                     }
 
@@ -395,12 +415,13 @@ class CheckinService:
     @staticmethod
     def buscar_checkin_aberto(user):
         """Retorna o check-in em aberto do usuário (sem checkout)."""
-        checkin = ServiceCheckin.query.filter_by(
-            user_id=user.id, company_id=user.company_id, type="checkin"
-        ).filter(
-            ServiceCheckin.checkout_at == None
-        ).order_by(ServiceCheckin.id.desc()).first()
-
+        checkin = (
+            ServiceCheckin.query
+            .filter_by(user_id=user.id, company_id=user.company_id, type="checkin")
+            .filter(ServiceCheckin.checkout_at == None)  # noqa: E711
+            .order_by(ServiceCheckin.id.desc())
+            .first()
+        )
         if not checkin:
             return {"open": False}
 
@@ -408,12 +429,12 @@ class CheckinService:
         order  = Order.query.get(checkin.order_id) if checkin.order_id else None
         return {
             "open": True,
-            "checkin_id":    checkin.id,
-            "checkin_at":    checkin.checkin_at,
-            "client_id":     checkin.client_id,
-            "client_name":   client.name if client else "",
-            "order_number":  order.number if order else "",
-            "order_id":      checkin.order_id,
+            "checkin_id":   checkin.id,
+            "checkin_at":   checkin.checkin_at,
+            "client_id":    checkin.client_id,
+            "client_name":  client.name if client else "",
+            "order_number": order.number if order else "",
+            "order_id":     checkin.order_id,
         }
 
     @staticmethod
@@ -423,7 +444,10 @@ class CheckinService:
     @staticmethod
     def buscar_checkins_da_os(order_id, company_id):
         """Retorna todos os check-ins de uma O.S específica."""
-        checkins = ServiceCheckin.query.filter_by(
-            order_id=order_id, company_id=company_id, type="checkin"
-        ).order_by(ServiceCheckin.id.desc()).all()
+        checkins = (
+            ServiceCheckin.query
+            .filter_by(order_id=order_id, company_id=company_id, type="checkin")
+            .order_by(ServiceCheckin.id.desc())
+            .all()
+        )
         return [c.to_dict() for c in checkins]
