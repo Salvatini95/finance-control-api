@@ -42,6 +42,15 @@ def _haversine_metros(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+def _formatar_duracao(duration_min) -> str:
+    """Formata duração em minutos para string legível (ex: '1h05min')."""
+    if duration_min is None:
+        return "0min"
+    h = duration_min // 60
+    m = duration_min % 60
+    return f"{h}h{m:02d}min" if h > 0 else f"{m}min"
+
+
 class CheckinService:
 
     @staticmethod
@@ -79,7 +88,7 @@ class CheckinService:
             }
 
         distancia = _haversine_metros(lat, lon, client.latitude, client.longitude)
-        raio      = _raio_metros()  # ← lido agora, não no import
+        raio      = _raio_metros()  # lido agora, não no import
 
         if distancia <= raio:
             return {
@@ -147,8 +156,7 @@ class CheckinService:
         3. Cliente e O.S existem e pertencem à empresa.
         4. Não há check-in aberto para a mesma O.S.
         5a. Cliente SEM GPS + PIN fornecido → PinService.validar().
-            GPS do colaborador NÃO é salvo automaticamente — admin deve
-            usar salvar_localizacao_cliente() ao colar o adesivo.
+            GPS do colaborador NÃO é salvo automaticamente.
         5b. Cliente COM GPS → validar_geolocalizacao() (raio via env).
 
         Args:
@@ -280,8 +288,25 @@ class CheckinService:
         """
         Registra saída (check-out).
 
+        Idempotência: se checkout_at já preenchido, retorna o resultado
+        calculado sem tentar escrever no banco novamente.
+        Isso garante que reconexão offline não cause erro 400 silencioso.
+
         Mesma lógica de GPS/PIN da entrada.
         GPS do colaborador nunca sobrescreve localização do cliente aqui.
+
+        Args:
+            user:           Usuário autenticado.
+            checkin_id:     ID do ServiceCheckin a finalizar.
+            lat/lon:        GPS do colaborador.
+            notes:          Observação de saída.
+            qr_token:       Token do QR code universal.
+            pin:            PIN quando cliente sem GPS.
+            local_id:       Não usado no checkout (sem campo no model), reservado.
+            synced_offline: True quando vem da fila offline.
+
+        Returns:
+            dict com 'ok', 'msg', 'duration_str', 'code' e campos auxiliares.
         """
         if qr_token and not CheckinService.validar_qr_universal(qr_token):
             return {"ok": False, "msg": "QR Code inválido.", "code": 400}
@@ -291,8 +316,23 @@ class CheckinService:
         ).first()
         if not checkin:
             return {"ok": False, "msg": "Check-in não encontrado.", "code": 404}
+
+        # ── IDEMPOTÊNCIA: checkout já registrado → retorna sucesso calculado ──
+        # Evita erro 400 silencioso quando sync offline tenta registrar duas vezes.
         if checkin.checkout_at:
-            return {"ok": False, "msg": "Este check-in já foi finalizado.", "code": 400}
+            dur_str = _formatar_duracao(checkin.duration_min)
+            return {
+                "ok": True,
+                "msg": f"✅ Serviço já concluído! Duração: {dur_str}",
+                "checkin_id": checkin.id,
+                "checkin_at": checkin.checkin_at,
+                "checkout_at": checkin.checkout_at,
+                "duration_min": checkin.duration_min,
+                "duration_str": dur_str,
+                "order_status": "done",
+                "duplicate": True,
+                "code": 200,
+            }
 
         client = Client.query.get(checkin.client_id)
         pin_id = None
@@ -334,9 +374,7 @@ class CheckinService:
         if pin_id:
             PinService.consumir(pin_id, user)
 
-        h       = duration // 60 if duration else 0
-        m       = duration % 60  if duration else 0
-        dur_str = f"{h}h{m:02d}min" if h > 0 else f"{m}min"
+        dur_str = _formatar_duracao(duration)
 
         return {
             "ok": True,
@@ -368,7 +406,8 @@ class CheckinService:
             "pin":        str | null
         }
 
-        Idempotência por local_id — eventos já processados são ignorados.
+        Idempotência por local_id (entrada) e por checkin_id já finalizado (saída).
+        Eventos já processados são ignorados sem erro.
 
         Returns:
             dict com 'ok', 'results' (lista de {local_id, ok, msg}) e 'code'.
