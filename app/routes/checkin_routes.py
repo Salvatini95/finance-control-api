@@ -2,6 +2,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import User, Client, ServiceCheckin
+from app.extensions import db
 from app.services.checkin_service import CheckinService, _raio_metros
 from app.services.pin_service import PinService
 
@@ -35,19 +36,26 @@ def get_qr_token():
 @checkin_bp.route("/checkin/<int:client_id>/start", methods=["POST"])
 @jwt_required()
 def checkin_start(client_id):
-    user   = _get_user(get_jwt_identity())
-    data   = request.get_json() or {}
-    result = CheckinService.registrar_entrada(
-        user=user,
-        client_id=client_id,
-        order_id=data.get("order_id"),
-        lat=data.get("lat"),
-        lon=data.get("lon"),
-        notes=data.get("notes"),
-        qr_token=data.get("qr_token"),
-        pin=data.get("pin"),
-        local_id=data.get("local_id"),
-    )
+    user = _get_user(get_jwt_identity())
+    if not user:
+        return jsonify({"ok": False, "msg": "Sessão expirada. Faça login novamente."}), 401
+    data = request.get_json() or {}
+    try:
+        result = CheckinService.registrar_entrada(
+            user=user,
+            client_id=client_id,
+            order_id=data.get("order_id"),
+            lat=data.get("lat"),
+            lon=data.get("lon"),
+            notes=data.get("notes"),
+            qr_token=data.get("qr_token"),
+            pin=data.get("pin"),
+            local_id=data.get("local_id"),
+        )
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Erro no check-in start: {e}")
+        return jsonify({"ok": False, "msg": "Erro interno ao registrar check-in. Tente novamente."}), 500
     code = result.pop("code", 200)
     return jsonify(result), code
 
@@ -56,18 +64,25 @@ def checkin_start(client_id):
 @checkin_bp.route("/checkin/<int:checkin_id>/finish", methods=["POST"])
 @jwt_required()
 def checkin_finish(checkin_id):
-    user   = _get_user(get_jwt_identity())
-    data   = request.get_json() or {}
-    result = CheckinService.registrar_saida(
-        user=user,
-        checkin_id=checkin_id,
-        lat=data.get("lat"),
-        lon=data.get("lon"),
-        notes=data.get("notes"),
-        qr_token=data.get("qr_token"),
-        pin=data.get("pin"),
-        local_id=data.get("local_id"),
-    )
+    user = _get_user(get_jwt_identity())
+    if not user:
+        return jsonify({"ok": False, "msg": "Sessão expirada. Faça login novamente."}), 401
+    data = request.get_json() or {}
+    try:
+        result = CheckinService.registrar_saida(
+            user=user,
+            checkin_id=checkin_id,
+            lat=data.get("lat"),
+            lon=data.get("lon"),
+            notes=data.get("notes"),
+            qr_token=data.get("qr_token"),
+            pin=data.get("pin"),
+            local_id=data.get("local_id"),
+        )
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Erro no check-in finish: {e}")
+        return jsonify({"ok": False, "msg": "Erro interno ao finalizar check-in. Tente novamente."}), 500
     code = result.pop("code", 200)
     return jsonify(result), code
 
