@@ -72,6 +72,16 @@ class AsaasService:
         resp = requests.get(url, headers=cls._headers(), timeout=15)
         return resp.json()
 
+    @classmethod
+    def _delete(cls, endpoint: str) -> dict:
+        """Executa DELETE na API do Asaas e retorna dict da resposta."""
+        url = f"{cls._base_url()}{endpoint}"
+        resp = requests.delete(url, headers=cls._headers(), timeout=15)
+        try:
+            return resp.json()
+        except Exception:
+            return {"deleted": resp.status_code == 200}
+
     # ── Clientes Asaas ────────────────────────────────────────────────────────
 
     @classmethod
@@ -245,6 +255,10 @@ class AsaasService:
         asaas_sub_id = resp["id"]
 
         # 5. Atualiza ou cria registro local
+        # PIX: pagamento não é imediato — "pending" até webhook PAYMENT_CONFIRMED
+        # CREDIT_CARD: cobrado na criação — já pode ser "active"
+        status_inicial = "active" if billing_type == "CREDIT_CARD" else "pending"
+
         sub = Subscription.query.filter_by(company_id=company.id).first()
         agora = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -253,7 +267,7 @@ class AsaasService:
             sub.asaas_customer_id     = customer_id
             sub.plan                  = plano
             sub.interval              = interval
-            sub.status                = "active"
+            sub.status                = status_inicial
             sub.valor                 = valor
             sub.billing_type          = billing_type
             sub.next_due_date         = next_due
@@ -266,7 +280,7 @@ class AsaasService:
                 asaas_customer_id      = customer_id,
                 plan                   = plano,
                 interval               = interval,
-                status                 = "active",
+                status                 = status_inicial,
                 valor                  = valor,
                 billing_type           = billing_type,
                 next_due_date          = next_due,
@@ -407,7 +421,7 @@ class AsaasService:
         if not sub or not sub.asaas_subscription_id:
             return {"ok": False, "msg": "Nenhuma assinatura ativa encontrada.", "code": 404}
 
-        resp = cls._post(f"/subscriptions/{sub.asaas_subscription_id}/cancel", {})
+        resp = cls._delete(f"/subscriptions/{sub.asaas_subscription_id}")
 
         if resp.get("errors"):
             erros = resp.get("errors", [{"description": "Erro desconhecido"}])
