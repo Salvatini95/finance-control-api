@@ -1,0 +1,71 @@
+name: RevSon — Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'org-ia/**'
+      - '**.md'
+      - 'scripts/**'
+
+jobs:
+  revson-review:
+    name: RevSon Code Review
+    runs-on: ubuntu-latest
+    # Só roda se houver ANTHROPIC_API_KEY configurada no repo
+    if: ${{ vars.ENABLE_REVSON == 'true' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Obter diff do commit/PR
+        id: diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff origin/${{ github.base_ref }}...HEAD > /tmp/code.diff
+          else
+            git diff HEAD~1 HEAD > /tmp/code.diff
+          fi
+          echo "diff_size=$(wc -l < /tmp/code.diff)" >> $GITHUB_OUTPUT
+
+      - name: Pular se diff vazio ou só docs
+        if: steps.diff.outputs.diff_size == '0'
+        run: echo "Diff vazio — pulando review." && exit 0
+
+      - name: RevSon — Review via Claude API
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          DIFF=$(cat /tmp/code.diff | head -500)  # limita tokens
+
+          REVIEW=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d "{
+              \"model\": \"claude-sonnet-4-6\",
+              \"max_tokens\": 1024,
+              \"system\": \"Você é RevSon, revisor de código do sv-protocol v1.0 do SV Finance. Stack: Python 3.13 + Flask 3.x + SQLAlchemy 2.x (backend) e React 19 + Vite (frontend). Revise o diff fornecido e aponte: (1) violações dos padrões do sv-protocol, (2) bugs evidentes, (3) ausência de server_default em coluna NOT NULL nova, (4) query sem filtro company_id, (5) lógica de negócio em route em vez de service, (6) isRG por hostname violado. Seja direto e conciso. Responda em português. Formato: lista de pontos com severidade [CRÍTICO | AVISO | SUGESTÃO]. Se não houver problemas, diga apenas: Revisão OK.\",
+              \"messages\": [{\"role\": \"user\", \"content\": \"Revise este diff:\\n\\n$DIFF\"}]
+            }")
+
+          echo "## 🤖 RevSon — Code Review" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "$REVIEW" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          text = data.get('content', [{}])[0].get('text', 'Erro ao obter review.')
+          print(text)
+          " >> $GITHUB_STEP_SUMMARY
+
+      - name: Salvar review como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: revson-review-${{ github.sha }}
+          path: /tmp/code.diff
+          retention-days: 30
