@@ -91,7 +91,7 @@ Instalar agentmemory (SQLite FTS5).
 
 ## ✅ Concluídos recentemente
 
-- [x] Sistema billing Asaas — backend completo (`asaas_service.py`, `billing_routes.py`, migration `billing_01`)
+- [x] Sistema billing Asaas — backend completo (`asaas_service.py`, `billing_routes.py`, migration `pin_cliente_add_01`)
 - [x] Frontend billing — `Plans.jsx`, `CheckoutModal.jsx`, `PlanBadge.jsx`, rota `/plans`
 - [x] Landing page — redesign completo (logo spinning, parallax, dashboard SVG, carrossel IG, founders, toggle anual/mensal)
 - [x] NF-e backend — `nfse_service.py`, `nfse_routes.py`, migration `nfse_order_fields_01`

@@ -15,7 +15,7 @@
 
 ## Estado no início desta sessão
 
-**Migration HEAD:** `billing_01`
+**Migration HEAD:** `pin_cliente_add_01`
 **Branch:** `main`
 **Último commit:** _(preencher via `git log --oneline -1`)_
 

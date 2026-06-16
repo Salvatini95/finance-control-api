@@ -43,11 +43,11 @@
 - **Conexão:** Transaction Pooler · porta 6543
 - **Schema:** único — multi-tenancy por `company_id`
 - **Senha:** sem caracteres especiais (conflito histórico com URL encoding)
-- **Migration HEAD:** `billing_01`
+- **Migration HEAD:** `pin_cliente_add_01`
 
 **Cadeia de migrations (mais recentes):**
 ```
-... → nfse_order_fields_01 → client_fields_v2_01 → billing_01 (HEAD)
+... → nfse_order_fields_01 → client_fields_v2_01 → pin_cliente_add_01 (HEAD)
 ```
 
 **Verificar antes de nova migration:**
