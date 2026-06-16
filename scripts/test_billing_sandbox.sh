@@ -69,7 +69,7 @@ SUB_CC=$(curl -s -X POST "$BASE_URL/billing/subscribe" \
     "billing_type": "CREDIT_CARD",
     "titular": {
       "name":          "Guilherme Salvatini",
-      "cpfCnpj":       "00000000000",
+      "cpfCnpj":       "24971563792",
       "email":         "guilhermesalvatini8@gmail.com",
       "phone":         "44999999999",
       "postalCode":    "87010000",
@@ -131,7 +131,7 @@ SUB_PIX=$(curl -s -X POST "$BASE_URL/billing/subscribe" \
     "billing_type": "PIX",
     "titular": {
       "name":          "Guilherme Salvatini",
-      "cpfCnpj":       "00000000000",
+      "cpfCnpj":       "24971563792",
       "email":         "guilhermesalvatini8@gmail.com",
       "phone":         "44999999999",
       "postalCode":    "87010000",
