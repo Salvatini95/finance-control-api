@@ -36,12 +36,12 @@ echo "============================================================"
 
 # ─── 0. Login ────────────────────────────────────────────────────────────────
 info "0. Login..."
-LOGIN=$(curl -s -X POST "$BASE_URL/auth/login" \
+LOGIN=$(curl -s -X POST "$BASE_URL/login" \
   -H "Content-Type: application/json" \
   -d "{\"email\":\"$EMAIL\",\"password\":\"$SENHA\"}")
 echo "$LOGIN" | jq .
 
-TOKEN=$(echo "$LOGIN" | jq -r '.access_token // empty')
+TOKEN=$(echo "$LOGIN" | jq -r '.token // empty')
 if [ -z "$TOKEN" ]; then
   fail "Login falhou — sem access_token"
   exit 1
