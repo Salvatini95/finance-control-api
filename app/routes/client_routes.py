@@ -27,6 +27,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.extensions import db
 from app.models import Client, User
+from app.services.client_service import ClientService
 from datetime import date
 from sqlalchemy import func
 import requests as http
@@ -494,9 +495,13 @@ def delete_client(client_id):
     c    = _find_client(client_id, user)
     if not c:
         return jsonify({"msg": "Cliente não encontrado"}), 404
-    db.session.delete(c)
-    db.session.commit()
-    return jsonify({"msg": "Cliente removido com sucesso"}), 200
+    try:
+        result = ClientService.delete(c)
+    except Exception:
+        db.session.rollback()
+        return jsonify({"ok": False, "msg": "Erro interno ao excluir cliente"}), 500
+    code = result.pop("code", 200)
+    return jsonify(result), code
 
 
 @client_bp.route("/clients/<int:client_id>/set-location", methods=["POST"])
