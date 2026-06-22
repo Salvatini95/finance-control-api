@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.extensions import db
 from app.models import Order, Quote, Client, Product, StockMovement, ServiceRecord, Transaction, User
+from app.services.order_service import OrderService
 from datetime import date
 import json
 
@@ -367,14 +368,13 @@ def delete_order(order_id):
     if user.role == "seller" and o.user_id != user.id:
         return jsonify({"msg": "Você não tem permissão para remover esta venda"}), 403
 
-    if o.transaction_id:
-        t = Transaction.query.get(o.transaction_id)
-        if t:
-            db.session.delete(t)
-
-    db.session.delete(o)
-    db.session.commit()
-    return jsonify({"msg": "Venda removida com sucesso"}), 200
+    try:
+        result = OrderService.delete(o)
+        code   = result.pop("code", 200)
+        return jsonify(result), code
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "msg": f"Erro inesperado ao excluir venda: {str(e)}"}), 500
 
 
 # =========================
